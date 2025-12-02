@@ -561,8 +561,8 @@ class SQLMetadataCollector(MetadataCollector):
         if missing:
             return False, f"Missing required fields: {', '.join(missing)}"
         
-        if not connection.table_schema:
-            return False, "table_schema is required"
+        # table_schema is optional - if not provided, will use default or query all schemas
+        # If include_list is provided, we can work without table_schema
         
         return True, None
     
@@ -667,11 +667,40 @@ class SQLMetadataCollector(MetadataCollector):
     
     def _build_metadata_query(self, connection: SQLConnectionDetails) -> str:
         """Build optimized query to fetch metadata from information schema"""
-        # Escape schema names properly
-        schemas = "','".join(s.replace("'", "''") for s in connection.table_schema)
-        db_type = safe_get(connection.db_details, 'data_source_type')
+        db_type = safe_get(connection.db_details, 'data_source_type', '').upper()
         
-        if db_type == DataSourceType.SQLSERVER.value:
+        # Build WHERE clause conditions
+        where_conditions = []
+        
+        # Handle table_schema - it can be null/empty, use default 'dbo' for SQL Server
+        table_schemas = connection.table_schema or []
+        if table_schemas:
+            # Escape schema names properly
+            schemas = "','".join(s.replace("'", "''") for s in table_schemas)
+            if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
+                where_conditions.append(f"c.TABLE_SCHEMA IN ('{schemas}')")
+            else:
+                where_conditions.append(f"c.table_schema IN ('{schemas}')")
+        elif 'SQLSERVER' in db_type or 'MSSQL' in db_type:
+            # Default to 'dbo' for SQL Server if no schema specified
+            where_conditions.append("c.TABLE_SCHEMA = 'dbo'")
+        else:
+            # For PostgreSQL/MariaDB, exclude system schemas
+            where_conditions.append("c.table_schema NOT IN ('information_schema', 'pg_catalog', 'mysql', 'performance_schema', 'sys')")
+        
+        # Handle include_list - filter to specific tables if provided
+        include_list = connection.include_list or []
+        if include_list:
+            tables = "','".join(t.replace("'", "''") for t in include_list)
+            if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
+                where_conditions.append(f"c.TABLE_NAME IN ('{tables}')")
+            else:
+                where_conditions.append(f"c.table_name IN ('{tables}')")
+        
+        # Combine conditions
+        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        
+        if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
             return f"""
                 SELECT 
                     CONCAT(c.TABLE_SCHEMA, '.', c.TABLE_NAME) AS full_table_name,
@@ -692,7 +721,7 @@ class SQLMetadataCollector(MetadataCollector):
                 ) pk ON c.TABLE_SCHEMA = pk.TABLE_SCHEMA 
                     AND c.TABLE_NAME = pk.TABLE_NAME 
                     AND c.COLUMN_NAME = pk.COLUMN_NAME
-                WHERE c.TABLE_SCHEMA IN ('{schemas}')
+                WHERE {where_clause}
                 ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION
             """
         else:
@@ -717,7 +746,7 @@ class SQLMetadataCollector(MetadataCollector):
                 ) pk ON c.table_schema = pk.table_schema 
                     AND c.table_name = pk.table_name 
                     AND c.column_name = pk.column_name
-                WHERE c.table_schema IN ('{schemas}')
+                WHERE {where_clause}
                 ORDER BY c.table_schema, c.table_name, c.ordinal_position
             """
     

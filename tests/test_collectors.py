@@ -83,8 +83,8 @@ class TestSQLMetadataCollector:
         assert is_valid is False
         assert "password_key" in error
     
-    def test_validate_connection_missing_schema(self, sql_collector):
-        """Test validation with missing table schema"""
+    def test_validate_connection_empty_schema_is_valid(self, sql_collector):
+        """Test validation with empty table schema - should be valid (defaults to 'dbo')"""
         conn = SQLConnectionDetails(
             source_id="test",
             catalog_name="CATALOG",
@@ -96,13 +96,14 @@ class TestSQLMetadataCollector:
             db_name="testdb",
             user_name="user",
             password_key="key",
-            table_schema=[]  # Empty
+            table_schema=[]  # Empty - should use default 'dbo' for SQL Server
         )
         
         is_valid, error = sql_collector.validate_connection(conn)
         
-        assert is_valid is False
-        assert "table_schema" in error
+        # Empty table_schema is now valid - defaults to 'dbo' for SQL Server
+        assert is_valid is True
+        assert error is None
     
     def test_build_jdbc_url_sqlserver(self, sql_collector):
         """Test JDBC URL building for SQL Server"""
@@ -194,6 +195,55 @@ class TestSQLMetadataCollector:
         assert "INFORMATION_SCHEMA.COLUMNS" in query
         assert "'dbo','sales'" in query
         assert "is_primary_key" in query.lower()
+    
+    def test_build_metadata_query_with_include_list(self, sql_collector):
+        """Test metadata query building with include_list and empty schema"""
+        conn = SQLConnectionDetails(
+            source_id="test",
+            catalog_name="CATALOG",
+            table_name=None,
+            metadata_enabled=True,
+            is_active=True,
+            db_details={"data_source_type": "SQLSERVER"},
+            db_host="localhost",
+            db_name="testdb",
+            db_port="1433",
+            user_name="user",
+            password_key="key",
+            table_schema=[],  # Empty schema
+            include_list=["tbl_customers", "tbl_orders"]  # Specific tables
+        )
+        
+        query = sql_collector._build_metadata_query(conn)
+        
+        assert "INFORMATION_SCHEMA.COLUMNS" in query
+        # Should default to 'dbo' schema for SQL Server
+        assert "TABLE_SCHEMA = 'dbo'" in query
+        # Should filter by include_list tables
+        assert "'tbl_customers','tbl_orders'" in query
+    
+    def test_build_metadata_query_null_schema(self, sql_collector):
+        """Test metadata query building with null schema defaults to 'dbo'"""
+        conn = SQLConnectionDetails(
+            source_id="test",
+            catalog_name="CATALOG",
+            table_name=None,
+            metadata_enabled=True,
+            is_active=True,
+            db_details={"data_source_type": "SQLSERVER"},
+            db_host="localhost",
+            db_name="testdb",
+            db_port="1433",
+            user_name="user",
+            password_key="key",
+            table_schema=None  # Null schema - should use default
+        )
+        
+        query = sql_collector._build_metadata_query(conn)
+        
+        assert "INFORMATION_SCHEMA.COLUMNS" in query
+        # Should default to 'dbo' schema for SQL Server
+        assert "TABLE_SCHEMA = 'dbo'" in query
     
     def test_process_sql_metadata(self, sql_collector, sample_sql_metadata_df, sql_connection_details):
         """Test processing raw SQL metadata"""
