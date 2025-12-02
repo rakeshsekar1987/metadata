@@ -641,9 +641,9 @@ class BaseMetadataCollector(ABC):
         
         # Add is_active and table_run_properties
         enriched = enriched.withColumn(
-            "is_active", F.col("is_included")
-        ).withColumn(
             "ct_enabled", F.col("ct_enabled").cast(IntegerType())
+        ).withColumn(
+            "is_active", F.col("is_included").cast(IntegerType())
         ).withColumn(
             "table_run_properties",
             F.concat(
@@ -888,12 +888,15 @@ class JDBCMetadataCollector(BaseMetadataCollector):
             if catalog_df.isEmpty():
                 return None
             
-            # Aggregate by table
+            # Aggregate by table - filter out null PK columns
             aggs = [
                 F.first(F.col("FULL_TABLE_NAME")).alias("full_table_name"),
-                F.collect_list(F.col("PK_COLUMN_NAME")).alias("id_columns"),
+                # Only collect non-null PK column names
+                F.collect_set(
+                    F.when(F.col("PK_COLUMN_NAME").isNotNull(), F.col("PK_COLUMN_NAME"))
+                ).alias("id_columns_raw"),
                 F.collect_list(F.col("COLUMN_NAME")).alias("source_schema"),
-                F.first(F.when(F.col("PARTITION_COLS").isNotNull(), F.col("PARTITION_COLS"))
+                F.first(F.when(F.col("PARTITION_COLS") == "true", F.lit("true"))
                        .otherwise(F.lit("false"))).alias("partition_flag"),
             ]
             
@@ -908,13 +911,23 @@ class JDBCMetadataCollector(BaseMetadataCollector):
                 .agg(*aggs)
             )
             
+            # Filter nulls from id_columns and build final result
+            grouped = grouped.withColumn(
+                "id_columns",
+                F.expr("filter(id_columns_raw, x -> x IS NOT NULL)")
+            )
+            
+            # Add ct_enabled column if not present
+            if not include_ct:
+                grouped = grouped.withColumn("ct_enabled", F.lit(0))
+            
             # Build final result
             result = grouped.select(
                 F.col("full_table_name"),
                 F.col("TABLE_NAME").alias("table_name"),
                 F.col("id_columns"),
                 F.array(F.col("partition_flag")).alias("partition_cols"),
-                (F.col("ct_enabled") if include_ct else F.lit(0)).cast(IntegerType()).alias("ct_enabled"),
+                F.col("ct_enabled").cast(IntegerType()).alias("ct_enabled"),
                 F.col("source_schema"),
                 self._udfs["to_snake_case_list"](F.col("source_schema")).alias("idp_schema"),
                 F.size(F.col("source_schema")).alias("column_count")
@@ -1132,15 +1145,21 @@ class CassandraCollector(BaseMetadataCollector):
                 .groupBy(F.col("t.table_name"))
                 .agg(
                     F.first(F.concat(F.lit(keyspace), F.lit("."), F.col("t.table_name"))).alias("full_table_name"),
-                    F.collect_list(
+                    # Only collect partition key columns (non-null)
+                    F.collect_set(
                         F.when(F.col("c.kind") == "partition_key", F.col("c.column_name"))
-                    ).alias("pk_columns"),
+                    ).alias("pk_columns_raw"),
                     F.collect_list(F.col("c.column_name")).alias("source_schema")
+                )
+                # Filter out nulls from pk_columns
+                .withColumn(
+                    "id_columns",
+                    F.expr("filter(pk_columns_raw, x -> x IS NOT NULL)")
                 )
                 .select(
                     F.col("full_table_name"),
                     F.col("t.table_name").alias("table_name"),
-                    F.array_distinct(F.array_compact(F.col("pk_columns"))).alias("id_columns"),
+                    F.col("id_columns"),
                     F.array().cast(ArrayType(StringType())).alias("partition_cols"),
                     F.lit(0).cast(IntegerType()).alias("ct_enabled"),
                     F.col("source_schema"),
@@ -1243,10 +1262,13 @@ class StorageMetadataCollector(BaseMetadataCollector):
             for f in files:
                 file_name = f.name.lower()
                 
+                # Check if it's a directory (ends with /)
+                is_directory = f.name.endswith("/") or (hasattr(f, 'isDir') and callable(f.isDir) and f.isDir())
+                
                 # Filter by extension if specified
-                if file_ext and not file_name.endswith(f".{file_ext}"):
+                if file_ext and not file_name.rstrip("/").endswith(f".{file_ext}"):
                     # Check if it's a directory that might contain files
-                    if f.isDir():
+                    if is_directory:
                         try:
                             sub_files = dbutils.fs.ls(f.path)
                             for sf in sub_files:
@@ -1257,6 +1279,10 @@ class StorageMetadataCollector(BaseMetadataCollector):
                                     )
                         except Exception:
                             continue
+                    continue
+                
+                # Skip directories
+                if is_directory:
                     continue
                 
                 self._process_file(f, file_ext, file_options, configured_ids, rows, sample_paths)
@@ -1335,13 +1361,22 @@ class StorageMetadataCollector(BaseMetadataCollector):
             # Get file modification time if available
             mod_time = None
             try:
-                mod_time = datetime.fromtimestamp(file_info.modificationTime / 1000)
+                if hasattr(file_info, 'modificationTime') and file_info.modificationTime:
+                    mod_time = datetime.fromtimestamp(file_info.modificationTime / 1000)
             except Exception:
                 pass
             
             # Add to sample paths
             if len(sample_paths) < ProcessingConfig.MAX_SAMPLE_FILES:
                 sample_paths.append(file_path)
+            
+            # Get file size safely
+            file_size = None
+            try:
+                if hasattr(file_info, 'size'):
+                    file_size = file_info.size
+            except Exception:
+                pass
             
             rows.append({
                 "full_table_name": file_path,
@@ -1351,7 +1386,7 @@ class StorageMetadataCollector(BaseMetadataCollector):
                 "ct_enabled": 0,
                 "source_schema": columns,
                 "column_count": len(columns),
-                "file_size_bytes": file_info.size,
+                "file_size_bytes": file_size,
                 "file_last_modified": mod_time,
                 "sample_file_paths": list(sample_paths)
             })
@@ -1460,10 +1495,13 @@ class RESTAPICollector(BaseMetadataCollector):
             
             # Extract column names from select expressions
             columns = []
-            for expr in select_exprs:
-                # Parse "source_col AS alias" pattern
-                if " AS " in expr.upper():
-                    alias = expr.split(" AS ")[-1].strip()
+            for expr in (select_exprs or []):
+                # Parse "source_col AS alias" pattern (case-insensitive)
+                expr_upper = expr.upper()
+                if " AS " in expr_upper:
+                    # Find position of " AS " in original string
+                    as_pos = expr_upper.find(" AS ")
+                    alias = expr[as_pos + 4:].strip()
                     columns.append(alias)
                 else:
                     columns.append(expr.strip())
@@ -1866,7 +1904,8 @@ def load_source_configurations(
     spark: SparkSession,
     config_table: str = "qa_idp.config.metadata_source_connection_details",
     source_types: Optional[List[str]] = None,
-    active_only: bool = True
+    active_only: bool = True,
+    metadata_enabled_only: bool = False
 ) -> List[DataSourceConfig]:
     """
     Load data source configurations from the configuration table.
@@ -1876,10 +1915,13 @@ def load_source_configurations(
         config_table: Fully qualified table name for configurations
         source_types: Optional list of source types to filter
         active_only: Whether to filter for active sources only
+        metadata_enabled_only: Whether to filter for metadata_enabled sources only
         
     Returns:
         List of DataSourceConfig objects
     """
+    import json
+    
     logger.info(f"Loading configurations from {config_table}")
     
     # Read configuration table
@@ -1892,11 +1934,8 @@ def load_source_configurations(
     if active_only:
         cfg_df = cfg_df.filter(F.col("is_active") == True)
     
-    # Parse db_details JSON
-    cfg_df = cfg_df.withColumn(
-        "db_details_parsed",
-        F.from_json(F.col("db_details"), "MAP<STRING, STRING>")
-    )
+    if metadata_enabled_only:
+        cfg_df = cfg_df.filter(F.col("metadata_enabled") == True)
     
     # Collect and convert to DataSourceConfig objects
     configs = []
@@ -1904,10 +1943,15 @@ def load_source_configurations(
         row_dict = row.asDict()
         
         # Parse db_details JSON string
-        import json
+        db_details_str = row_dict.get("db_details", "{}")
         try:
-            db_details = json.loads(row_dict.get("db_details", "{}"))
-        except json.JSONDecodeError:
+            # Handle case where db_details might already be a dict
+            if isinstance(db_details_str, dict):
+                db_details = db_details_str
+            else:
+                db_details = json.loads(db_details_str or "{}")
+        except (json.JSONDecodeError, TypeError):
+            logger.warning(f"Failed to parse db_details for {row_dict.get('id')}, using empty dict")
             db_details = {}
         
         config = DataSourceConfig(
@@ -2061,10 +2105,11 @@ if results:
             )
             
             # Write to table
+            # Use "id" as merge key for incremental loads (based on original code)
             write_table(
                 final_df,
                 config_table,
-                partition_cols=["catalog_name"] if not full_load else None,
+                partition_cols=["id"] if not full_load else None,
                 cdc_check=True,
                 source_delete=True
             )
@@ -2084,13 +2129,17 @@ else:
 # COMMAND ----------
 # DBTITLE 1,Job Exit
 
-success_count = summary_df.filter(F.col("status") == "Success").count()
-failure_count = summary_df.filter(F.col("status") == "Failure").count()
+try:
+    success_count = summary_df.filter(F.col("status") == "Success").count()
+    failure_count = summary_df.filter(F.col("status") == "Failure").count()
 
-if failure_count > 0:
-    exit_status = f"COMPLETED_WITH_ERRORS - Success: {success_count}, Failed: {failure_count}"
-else:
-    exit_status = f"SUCCESS - Processed {success_count} sources"
+    if failure_count > 0:
+        exit_status = f"COMPLETED_WITH_ERRORS - Success: {success_count}, Failed: {failure_count}"
+    else:
+        exit_status = f"SUCCESS - Processed {success_count} sources"
+except NameError:
+    # summary_df not defined (error occurred before processing)
+    exit_status = "FAILED - Processing did not complete"
 
 logger.info(exit_status)
 dbutils.notebook.exit(exit_status)

@@ -2,6 +2,22 @@
 
 This document verifies that all requirements and scenarios are covered by the IDP Metadata Collector Framework.
 
+## 🔧 Issues Fixed (Review Pass)
+
+| Issue | Fix Applied |
+|-------|-------------|
+| PK columns collected with nulls | Changed to `collect_set` with filter for non-null values |
+| `ct_enabled` column undefined when CT disabled | Added explicit column creation when `include_ct=False` |
+| `array_compact` not available in all Spark versions | Replaced with `filter(x -> x IS NOT NULL)` expression |
+| Directory detection in storage sources | Added robust check using `name.endswith("/")` and `hasattr` |
+| File `modificationTime` attribute access | Added `hasattr` check with fallback |
+| File `size` attribute access | Added `hasattr` check with fallback |
+| `is_active` not cast to IntegerType | Added explicit cast |
+| REST API `select_exprs` case sensitivity | Fixed to use position-based parsing |
+| `summary_df` undefined error at exit | Added try-except with NameError handling |
+| JSON parsing for db_details | Added handling for dict vs string input |
+| Write table merge key | Changed from `catalog_name` to `id` for incremental loads |
+
 ## ✅ Data Source Types Coverage
 
 | Source Type | Collector Class | Status |
