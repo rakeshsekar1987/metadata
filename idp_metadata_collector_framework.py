@@ -793,17 +793,18 @@ class SQLMetadataCollector(MetadataCollector):
         )
         
         # Add partition columns
-        # First check if partition_column is specified in connection config
-        if connection.partition_column:
+        # Check if partition_column is specified in connection config (db_details)
+        partition_col = connection.partition_column or safe_get(connection.db_details, 'partition_column')
+        
+        if partition_col:
             # Use the configured partition column
             processed_df = processed_df.withColumn(
                 "partition_cols", 
-                F.array(F.lit(connection.partition_column)).cast(ArrayType(StringType()))
+                F.array(F.lit(partition_col)).cast(ArrayType(StringType()))
             )
-        elif jdbc_url and jdbc_props:
-            # Try to detect partition columns from database system tables
-            processed_df = self._add_partition_columns(processed_df, connection, jdbc_url, jdbc_props)
         else:
+            # Default to empty array (matches original behavior)
+            # Note: SQL tables typically don't expose partition info via INFORMATION_SCHEMA
             processed_df = processed_df.withColumn("partition_cols", F.array().cast(ArrayType(StringType())))
         
         return processed_df
