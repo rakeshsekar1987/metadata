@@ -2388,29 +2388,43 @@ def main_notebook_execution(dbutils, spark: SparkSession) -> str:
         Status string: "SUCCESS", "PARTIAL_SUCCESS", or "FAILURE"
     """
     
-    # Initialize widgets with defaults
+    # Get environment variables (set in Databricks cluster or job)
+    import os
+    env = os.environ.get("ENV", "qa")
+    default_secret_scope = os.environ.get("SECRET_SCOPE", "idp-secrets")
+    storage_name = os.environ.get("STORAGE_NAME", "")
+    container_name = os.environ.get("CONTAINER_NAME", "")
+    
+    # Initialize widgets with defaults from environment
     dbutils.widgets.text("full_load", "False", "Full Load?")
     dbutils.widgets.text("job_run_id", "", "Job Run ID")
     dbutils.widgets.text("compute_row_count", "False", "Compute Row Counts?")
-    dbutils.widgets.text("secret_scope", "idp-secrets", "Secret Scope Name")
+    dbutils.widgets.text("secret_scope", default_secret_scope, "Secret Scope Name")
     
     # Parse widget values
     full_load = dbutils.widgets.get("full_load").strip().lower() == "true"
     job_run_id = dbutils.widgets.get("job_run_id").strip() or str(uuid4())
     compute_row_count = dbutils.widgets.get("compute_row_count").strip().lower() == "true"
-    secret_scope = dbutils.widgets.get("secret_scope").strip() or "idp-secrets"
+    secret_scope = dbutils.widgets.get("secret_scope").strip() or default_secret_scope
+    
+    print(f"🔧 Configuration:")
+    print(f"   Environment: {env}")
+    print(f"   Secret Scope: {secret_scope}")
+    print(f"   Full Load: {full_load}")
+    print(f"   Compute Row Count: {compute_row_count}")
     
     # Setup configuration
     config = CollectorConfig().with_row_count(compute_row_count)
     
-    # Initialize components - use the configurable secret scope
+    # Initialize components - use the configurable secret scope from environment
     secret_provider = DatabricksSecretProvider(dbutils, scope=secret_scope)
     df_reader = DatabricksDataFrameReader(spark)
     df_writer = DatabricksDataFrameWriter(spark)
     http_client = RequestsHTTPClient()
     
-    # Load source configurations
-    config_table = "qa_idp.config.metadata_source_connection_details"
+    # Load source configurations (table name uses environment prefix)
+    config_table = f"{env}_idp.config.metadata_source_connection_details"
+    print(f"   Config Table: {config_table}")
     config_df = df_reader.read_table(config_table)
     
     # Parse connections
@@ -2449,14 +2463,14 @@ def main_notebook_execution(dbutils, spark: SparkSession) -> str:
     
     # Write results
     if not is_dataframe_empty(metadata_df):
-        target_table = "qa_idp.config.meta_data_registry"
+        target_table = f"{env}_idp.config.meta_data_registry"
         orchestrator.write_results(metadata_df, target_table, full_load)
         print(f"✅ Metadata written to {target_table}")
     else:
         print("⚠️ No metadata to write")
     
     # Write summary report
-    summary_table = f"qa_idp.config.metadata_collection_summary_{job_run_id}"
+    summary_table = f"{env}_idp.config.metadata_collection_summary_{job_run_id}"
     summary_df.write.format("delta").mode("overwrite").saveAsTable(summary_table)
     print(f"📊 Summary report written to {summary_table}")
     
