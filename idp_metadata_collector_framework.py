@@ -2160,7 +2160,8 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
     connections = []
     
     # Filter active sources and collect (should be small dataset)
-    active_sources = config_df.filter(F.col("is_active") == 1).collect()
+    # Handle both BOOLEAN and INT types for is_active column
+    active_sources = config_df.filter(F.col("is_active").cast("boolean") == True).collect()
     
     for row in active_sources:
         try:

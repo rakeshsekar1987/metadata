@@ -11,7 +11,7 @@ from typing import Dict, List, Any, Optional
 from pyspark.sql import SparkSession, DataFrame
 from pyspark.sql.types import (
     StructType, StructField, StringType, IntegerType, 
-    LongType, ArrayType, TimestampType
+    LongType, ArrayType, TimestampType, BooleanType
 )
 
 import sys
@@ -272,8 +272,8 @@ def config_df(spark):
         StructField("id", StringType(), False),
         StructField("catalog_name", StringType(), False),
         StructField("table_name", StringType(), True),
-        StructField("metadata_enabled", IntegerType(), True),
-        StructField("is_active", IntegerType(), True),
+        StructField("metadata_enabled", BooleanType(), True),
+        StructField("is_active", BooleanType(), True),
         StructField("db_details", StringType(), False)
     ])
     
@@ -282,8 +282,8 @@ def config_df(spark):
             "source_1",
             "CATALOG_A",
             None,
-            1,
-            1,
+            True,
+            True,
             json.dumps({
                 "data_source_type": "SQLSERVER",
                 "db_host": "localhost",
@@ -300,8 +300,8 @@ def config_df(spark):
             "source_2",
             "CATALOG_B",
             None,
-            1,
-            1,
+            True,
+            True,
             json.dumps({
                 "data_source_type": "ABFSS_STORAGE",
                 "storage_name": "mystorageaccount",
@@ -314,8 +314,8 @@ def config_df(spark):
             "source_3",
             "CATALOG_C",
             None,
-            1,
-            0,  # Inactive
+            True,
+            False,  # Inactive
             json.dumps({
                 "data_source_type": "POSTGRESQL",
                 "db_host": "pg.example.com"
