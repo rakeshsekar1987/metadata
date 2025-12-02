@@ -261,6 +261,84 @@ class TestParseConnections:
         connections = parse_connections(empty_df)
         
         assert len(connections) == 0
+    
+    def test_parse_data_source_type_from_row_column(self, spark):
+        """Test that data_source_type is read from row column (not db_details)"""
+        import json
+        
+        # Schema with data_source_type as separate column (real table structure)
+        schema = StructType([
+            StructField("id", StringType(), False),
+            StructField("data_source_type", StringType(), False),
+            StructField("catalog_name", StringType(), False),
+            StructField("table_name", StringType(), True),
+            StructField("metadata_enabled", IntegerType(), True),
+            StructField("is_active", IntegerType(), True),
+            StructField("db_details", StringType(), False)
+        ])
+        
+        # db_details does NOT contain data_source_type - it's in the row column
+        data = [(
+            "source_1",
+            "SQLSERVER",  # data_source_type as separate column
+            "CATALOG_A",
+            None,
+            1,
+            1,
+            json.dumps({
+                "db_host": "localhost",
+                "db_name": "test_db",
+                "db_port": "1433",
+                "user_name": "admin",
+                "password_key": "sql_password"
+            })
+        )]
+        
+        config_df = spark.createDataFrame(data, schema)
+        connections = parse_connections(config_df)
+        
+        assert len(connections) == 1
+        assert isinstance(connections[0], SQLConnectionDetails)
+        # Verify data_source_type was added to db_details for later use
+        assert connections[0].db_details.get('data_source_type') == 'SQLSERVER'
+    
+    def test_parse_data_source_type_fallback_to_db_details(self, spark):
+        """Test backward compatibility: read data_source_type from db_details if not in row"""
+        import json
+        
+        # Schema WITHOUT data_source_type column (old structure)
+        schema = StructType([
+            StructField("id", StringType(), False),
+            StructField("catalog_name", StringType(), False),
+            StructField("table_name", StringType(), True),
+            StructField("metadata_enabled", IntegerType(), True),
+            StructField("is_active", IntegerType(), True),
+            StructField("db_details", StringType(), False)
+        ])
+        
+        # db_details contains data_source_type (old way)
+        data = [(
+            "source_1",
+            "CATALOG_A",
+            None,
+            1,
+            1,
+            json.dumps({
+                "data_source_type": "SQLSERVER",
+                "db_host": "localhost",
+                "db_name": "test_db",
+                "db_port": "1433",
+                "user_name": "admin",
+                "password_key": "sql_password"
+            })
+        )]
+        
+        config_df = spark.createDataFrame(data, schema)
+        connections = parse_connections(config_df)
+        
+        assert len(connections) == 1
+        assert isinstance(connections[0], SQLConnectionDetails)
+        assert connections[0].db_host == "localhost"
 
 
 class TestWriteResults:

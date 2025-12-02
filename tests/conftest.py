@@ -265,11 +265,13 @@ def sample_sql_metadata_df(spark):
 
 @pytest.fixture
 def config_df(spark):
-    """Create sample configuration DataFrame"""
+    """Create sample configuration DataFrame matching real table structure"""
     import json
     
+    # Schema matches the real table: data_source_type is a separate column
     schema = StructType([
         StructField("id", StringType(), False),
+        StructField("data_source_type", StringType(), False),  # Separate column, not in db_details
         StructField("catalog_name", StringType(), False),
         StructField("table_name", StringType(), True),
         StructField("metadata_enabled", BooleanType(), True),
@@ -280,12 +282,13 @@ def config_df(spark):
     data = [
         (
             "source_1",
+            "SQLSERVER",  # data_source_type as separate column
             "CATALOG_A",
             None,
             True,
             True,
             json.dumps({
-                "data_source_type": "SQLSERVER",
+                # No data_source_type here - it's in the row column
                 "db_host": "localhost",
                 "db_name": "test_db",
                 "db_port": "1433",
@@ -298,12 +301,13 @@ def config_df(spark):
         ),
         (
             "source_2",
+            "ABFSS_STORAGE",  # data_source_type as separate column
             "CATALOG_B",
             None,
             True,
             True,
             json.dumps({
-                "data_source_type": "ABFSS_STORAGE",
+                # No data_source_type here - it's in the row column
                 "storage_name": "mystorageaccount",
                 "container_name": "data",
                 "folder_path": "raw/files",
@@ -312,12 +316,13 @@ def config_df(spark):
         ),
         (
             "source_3",
+            "POSTGRESQL",  # data_source_type as separate column
             "CATALOG_C",
             None,
             True,
             False,  # Inactive
             json.dumps({
-                "data_source_type": "POSTGRESQL",
+                # No data_source_type here - it's in the row column
                 "db_host": "pg.example.com"
             })
         )

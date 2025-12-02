@@ -2236,10 +2236,18 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
                 except Exception:
                     db_details = {}
             
-            data_source_type = _get_data_source_type(db_details)
+            # First try to get data_source_type from the row itself (as a column)
+            # Then fall back to looking inside db_details
+            data_source_type = _get_row_value(row, 'data_source_type', '')
+            if not data_source_type:
+                data_source_type = _get_data_source_type(db_details)
+            
+            # Store data_source_type in db_details for later use by collectors
+            if data_source_type:
+                db_details['data_source_type'] = data_source_type
             
             # Normalize data source type for matching
-            ds_type_upper = data_source_type.upper() if data_source_type else ''
+            ds_type_upper = str(data_source_type).upper() if data_source_type else ''
             
             # Create appropriate connection type
             if any(storage_type in ds_type_upper for storage_type in ["STORAGE", "ABFSS", "WABS", "BLOB", "ADLS", "S3", "GCS"]):
