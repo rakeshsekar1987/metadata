@@ -597,8 +597,8 @@ class SQLMetadataCollector(MetadataCollector):
         df = df.persist(self.config.CACHE_STORAGE_LEVEL)
         
         try:
-            # Process and transform metadata (include JDBC info for partition column detection)
-            processed_df = self._process_sql_metadata(df, connection, jdbc_url, jdbc_props)
+            # Process and transform metadata
+            processed_df = self._process_sql_metadata(df, connection)
             
             # Compute row counts and table sizes if enabled (expensive)
             if self.config.COMPUTE_ROW_COUNT:
@@ -669,33 +669,20 @@ class SQLMetadataCollector(MetadataCollector):
     
     def _build_metadata_query(self, connection: SQLConnectionDetails) -> str:
         """Build query to fetch metadata from information schema"""
-        # Handle table_schema - can be null/empty, default to 'dbo' for SQL Server
-        table_schemas = connection.table_schema or []
-        if table_schemas:
-            schemas = "','".join(s.replace("'", "''") for s in table_schemas)
-        else:
-            schemas = "dbo"  # Default schema for SQL Server
+        # Handle empty table_schema - default to 'dbo' for SQL Server
+        table_schemas = connection.table_schema if connection.table_schema else ['dbo']
+        schemas = "','".join(table_schemas)
         
-        # Handle include_list for table filtering
-        include_list = connection.include_list or []
-        table_filter = ""
-        if include_list:
-            tables = "','".join(t.replace("'", "''") for t in include_list)
-            table_filter = f" AND c.TABLE_NAME IN ('{tables}')"
-        
-        db_type = safe_get(connection.db_details, 'data_source_type', '')
-        
-        if db_type == DataSourceType.SQLSERVER.value:
-            # SQL Server query - uses LIKE 'PK_%' for primary key detection (original logic)
-            # Note: ORDER BY removed - not allowed in subqueries in SQL Server
+        if connection.db_details.get('data_source_type') == DataSourceType.SQLSERVER.value:
+            # SQL Server query (ORDER BY removed - not allowed in JDBC subqueries)
             return f"""
                 SELECT 
-                    CONCAT(c.TABLE_SCHEMA, '.', c.TABLE_NAME) as full_table_name,
-                    c.TABLE_NAME as table_name,
-                    c.COLUMN_NAME as column_name,
-                    c.DATA_TYPE as data_type,
-                    c.IS_NULLABLE as is_nullable,
-                    c.ORDINAL_POSITION as ordinal_position,
+                    CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) as full_table_name,
+                    TABLE_NAME as table_name,
+                    COLUMN_NAME as column_name,
+                    DATA_TYPE as data_type,
+                    IS_NULLABLE as is_nullable,
+                    ORDINAL_POSITION as ordinal_position,
                     CASE WHEN kcu.COLUMN_NAME IS NOT NULL THEN 'true' ELSE 'false' END as is_primary_key
                 FROM INFORMATION_SCHEMA.COLUMNS c
                 LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
@@ -703,39 +690,29 @@ class SQLMetadataCollector(MetadataCollector):
                     AND c.TABLE_NAME = kcu.TABLE_NAME 
                     AND c.COLUMN_NAME = kcu.COLUMN_NAME
                     AND kcu.CONSTRAINT_NAME LIKE 'PK_%'
-                WHERE c.TABLE_SCHEMA IN ('{schemas}'){table_filter}
+                WHERE c.TABLE_SCHEMA IN ('{schemas}')
             """
         else:
-            # PostgreSQL/MariaDB query
+            # PostgreSQL/MariaDB query (ORDER BY removed for consistency)
             return f"""
                 SELECT 
-                    CONCAT(c.table_schema, '.', c.table_name) as full_table_name,
-                    c.table_name,
-                    c.column_name,
-                    c.data_type,
-                    c.is_nullable,
-                    c.ordinal_position,
+                    CONCAT(table_schema, '.', table_name) as full_table_name,
+                    table_name,
+                    column_name,
+                    data_type,
+                    is_nullable,
+                    ordinal_position,
                     'false' as is_primary_key
-                FROM information_schema.columns c
-                WHERE c.table_schema IN ('{schemas}'){table_filter.lower()}
+                FROM information_schema.columns
+                WHERE table_schema IN ('{schemas}')
             """
     
-    def _process_sql_metadata(
-        self, 
-        df: DataFrame, 
-        connection: SQLConnectionDetails,
-        jdbc_url: str = None,
-        jdbc_props: Dict[str, str] = None
-    ) -> DataFrame:
-        """
-        Process raw SQL metadata into standard format.
-        Uses native Spark functions for performance.
-        """
+    def _process_sql_metadata(self, df: DataFrame, connection: SQLConnectionDetails) -> DataFrame:
+        """Process raw SQL metadata into standard format"""
         # Group by table to aggregate column information
         processed_df = (
             df.groupBy("full_table_name", "table_name")
             .agg(
-                # Collect primary key columns (filter nulls using when/otherwise)
                 F.collect_list(
                     F.when(F.col("is_primary_key") == "true", F.col("column_name"))
                 ).alias("id_columns_raw"),
@@ -749,30 +726,14 @@ class SQLMetadataCollector(MetadataCollector):
                     )
                 ).alias("column_details")
             )
-            # Filter out null values from id_columns using array_except
             .withColumn(
                 "id_columns",
-                F.array_except(F.col("id_columns_raw"), F.array(F.lit(None).cast(StringType())))
+                F.expr("filter(id_columns_raw, x -> x is not null)")
             )
+            .withColumn("partition_cols", F.array())  # SQL tables typically don't have partitions
             .withColumn("ct_enabled", F.lit(1 if connection.is_ct_enabled else 0))
-            .withColumn("db_name", F.lit(connection.db_name))
             .drop("id_columns_raw")
         )
-        
-        # Add partition columns
-        # Check if partition_column is specified in connection config (db_details)
-        partition_col = connection.partition_column or safe_get(connection.db_details, 'partition_column')
-        
-        if partition_col:
-            # Use the configured partition column
-            processed_df = processed_df.withColumn(
-                "partition_cols", 
-                F.array(F.lit(partition_col)).cast(ArrayType(StringType()))
-            )
-        else:
-            # Default to empty array (matches original behavior)
-            # Note: SQL tables typically don't expose partition info via INFORMATION_SCHEMA
-            processed_df = processed_df.withColumn("partition_cols", F.array().cast(ArrayType(StringType())))
         
         return processed_df
     

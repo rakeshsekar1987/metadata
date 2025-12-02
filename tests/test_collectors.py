@@ -196,8 +196,8 @@ class TestSQLMetadataCollector:
         assert "'dbo','sales'" in query
         assert "is_primary_key" in query.lower()
     
-    def test_build_metadata_query_with_include_list(self, sql_collector):
-        """Test metadata query building with include_list and empty schema"""
+    def test_build_metadata_query_with_empty_schema(self, sql_collector):
+        """Test metadata query building with empty schema defaults to 'dbo'"""
         conn = SQLConnectionDetails(
             source_id="test",
             catalog_name="CATALOG",
@@ -211,16 +211,14 @@ class TestSQLMetadataCollector:
             user_name="user",
             password_key="key",
             table_schema=[],  # Empty schema
-            include_list=["tbl_customers", "tbl_orders"]  # Specific tables
+            include_list=["tbl_customers", "tbl_orders"]
         )
         
         query = sql_collector._build_metadata_query(conn)
         
         assert "INFORMATION_SCHEMA.COLUMNS" in query
-        # Should default to 'dbo' schema for SQL Server
-        assert "TABLE_SCHEMA = 'dbo'" in query
-        # Should filter by include_list tables
-        assert "'tbl_customers','tbl_orders'" in query
+        # Should default to 'dbo' schema for SQL Server when empty
+        assert "TABLE_SCHEMA IN ('dbo')" in query
     
     def test_build_metadata_query_null_schema(self, sql_collector):
         """Test metadata query building with null schema defaults to 'dbo'"""
@@ -243,7 +241,7 @@ class TestSQLMetadataCollector:
         
         assert "INFORMATION_SCHEMA.COLUMNS" in query
         # Should default to 'dbo' schema for SQL Server
-        assert "TABLE_SCHEMA = 'dbo'" in query
+        assert "TABLE_SCHEMA IN ('dbo')" in query
     
     def test_process_sql_metadata(self, sql_collector, sample_sql_metadata_df, sql_connection_details):
         """Test processing raw SQL metadata"""
