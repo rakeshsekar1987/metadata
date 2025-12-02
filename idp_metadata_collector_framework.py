@@ -834,20 +834,27 @@ class SQLMetadataCollector(MetadataCollector):
                 .option("query", f"SELECT * FROM ({combined_query}) AS counts")
                 .options(**jdbc_props)
                 .load()
-                # Rename columns to avoid conflicts with original df columns
-                .withColumnRenamed("table_name", "_count_table_name")
-                .withColumnRenamed("row_count", "_row_count")
             )
             
-            # Join counts back to main DataFrame
-            result_df = df.join(
-                counts_df,
-                df["full_table_name"] == counts_df["_count_table_name"],
-                "left"
-            ).withColumn(
-                "table_row_count",
-                F.col("_row_count").cast(LongType())
-            ).drop("_count_table_name", "_row_count")
+            # Create a mapping DataFrame with renamed columns to avoid conflicts
+            # Use broadcast for small lookup table
+            counts_lookup = F.broadcast(
+                counts_df.select(
+                    F.col("table_name").alias("_lookup_table"),
+                    F.col("row_count").alias("_lookup_count")
+                )
+            )
+            
+            # Join counts back to main DataFrame using column expressions
+            result_df = (
+                df.join(
+                    counts_lookup,
+                    F.col("full_table_name") == F.col("_lookup_table"),
+                    "left"
+                )
+                .withColumn("table_row_count", F.col("_lookup_count").cast(LongType()))
+                .drop("_lookup_table", "_lookup_count")
+            )
             
             # Now get table sizes
             result_df = self._add_sql_table_sizes(
@@ -902,20 +909,27 @@ class SQLMetadataCollector(MetadataCollector):
                 .option("query", size_query)
                 .options(**jdbc_props)
                 .load()
-                # Rename columns to avoid conflicts with original df columns
-                .withColumnRenamed("table_name", "_size_table_name")
-                .withColumnRenamed("size_bytes", "_size_bytes")
             )
             
-            # Join sizes back to main DataFrame
-            return df.join(
-                sizes_df,
-                df["full_table_name"] == sizes_df["_size_table_name"],
-                "left"
-            ).withColumn(
-                "table_size",
-                F.col("_size_bytes").cast(LongType())
-            ).drop("_size_table_name", "_size_bytes")
+            # Create a mapping DataFrame with renamed columns to avoid conflicts
+            # Use broadcast for small lookup table
+            sizes_lookup = F.broadcast(
+                sizes_df.select(
+                    F.col("table_name").alias("_size_lookup_table"),
+                    F.col("size_bytes").alias("_size_lookup_bytes")
+                )
+            )
+            
+            # Join sizes back to main DataFrame using column expressions
+            return (
+                df.join(
+                    sizes_lookup,
+                    F.col("full_table_name") == F.col("_size_lookup_table"),
+                    "left"
+                )
+                .withColumn("table_size", F.col("_size_lookup_bytes").cast(LongType()))
+                .drop("_size_lookup_table", "_size_lookup_bytes")
+            )
             
         except Exception as e:
             self.logger.warning(f"Failed to get table sizes: {str(e)}")
