@@ -29,6 +29,7 @@ Performance Optimizations:
 
 from __future__ import annotations
 
+import builtins
 import logging
 import re
 import sys
@@ -43,6 +44,11 @@ from typing import Dict, List, Optional, Tuple, Any, Callable, Union
 from uuid import uuid4
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from functools import lru_cache
+
+# Store references to built-in functions that may be shadowed
+_builtin_min = builtins.min
+_builtin_max = builtins.max
+_builtin_len = builtins.len
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession, Column
@@ -1717,7 +1723,7 @@ class MetadataCollectionOrchestrator:
         
         # Process in batches
         for batch_start in range(0, len(connections), self.config.BATCH_SIZE):
-            batch_end = min(batch_start + self.config.BATCH_SIZE, len(connections))
+            batch_end = _builtin_min(batch_start + self.config.BATCH_SIZE, _builtin_len(connections))
             batch = connections[batch_start:batch_end]
             batch_num = batch_start // self.config.BATCH_SIZE + 1
             
@@ -1841,7 +1847,7 @@ class MetadataCollectionOrchestrator:
                 
                 if attempt < self.config.MAX_RETRIES:
                     # Exponential backoff with jitter
-                    delay = min(
+                    delay = _builtin_min(
                         self.config.RETRY_BASE_DELAY * (2 ** (attempt - 1)),
                         self.config.RETRY_MAX_DELAY
                     )
