@@ -69,27 +69,114 @@ class DataSourceType(Enum):
     REST_API = "REST_API"
 
 
-@dataclass(frozen=True)
 class CollectorConfig:
     """
-    Immutable configuration for the collector framework.
-    Use frozen=True to ensure thread safety.
+    Configuration for the collector framework.
+    Implements immutability through __slots__ and property access.
     """
-    BATCH_SIZE: int = 25
-    MAX_RETRIES: int = 3
-    MAX_WORKERS: int = 5
-    COMPUTE_ROW_COUNT: bool = False  # Expensive operation, default disabled
-    SAMPLE_FILE_LIMIT: int = 10
-    LOG_LEVEL: str = "INFO"
-    REST_API_TIMEOUT: int = 30  # seconds
-    JDBC_FETCH_SIZE: int = 10000
-    JDBC_BATCH_SIZE: int = 1000
-    JDBC_NUM_PARTITIONS: int = 10
-    CACHE_STORAGE_LEVEL: StorageLevel = StorageLevel.MEMORY_AND_DISK
-    RETRY_BASE_DELAY: float = 1.0
-    RETRY_MAX_DELAY: float = 60.0
-    CDC_SAMPLE_SIZE: int = 100
-    ENABLE_SCHEMA_EVOLUTION: bool = True
+    __slots__ = (
+        '_BATCH_SIZE', '_MAX_RETRIES', '_MAX_WORKERS', '_COMPUTE_ROW_COUNT',
+        '_SAMPLE_FILE_LIMIT', '_LOG_LEVEL', '_REST_API_TIMEOUT', '_JDBC_FETCH_SIZE',
+        '_JDBC_BATCH_SIZE', '_JDBC_NUM_PARTITIONS', '_CACHE_STORAGE_LEVEL',
+        '_RETRY_BASE_DELAY', '_RETRY_MAX_DELAY', '_CDC_SAMPLE_SIZE', '_ENABLE_SCHEMA_EVOLUTION'
+    )
+    
+    def __init__(
+        self,
+        BATCH_SIZE: int = 25,
+        MAX_RETRIES: int = 3,
+        MAX_WORKERS: int = 5,
+        COMPUTE_ROW_COUNT: bool = False,
+        SAMPLE_FILE_LIMIT: int = 10,
+        LOG_LEVEL: str = "INFO",
+        REST_API_TIMEOUT: int = 30,
+        JDBC_FETCH_SIZE: int = 10000,
+        JDBC_BATCH_SIZE: int = 1000,
+        JDBC_NUM_PARTITIONS: int = 10,
+        CACHE_STORAGE_LEVEL: Optional[StorageLevel] = None,
+        RETRY_BASE_DELAY: float = 1.0,
+        RETRY_MAX_DELAY: float = 60.0,
+        CDC_SAMPLE_SIZE: int = 100,
+        ENABLE_SCHEMA_EVOLUTION: bool = True,
+    ):
+        object.__setattr__(self, '_BATCH_SIZE', BATCH_SIZE)
+        object.__setattr__(self, '_MAX_RETRIES', MAX_RETRIES)
+        object.__setattr__(self, '_MAX_WORKERS', MAX_WORKERS)
+        object.__setattr__(self, '_COMPUTE_ROW_COUNT', COMPUTE_ROW_COUNT)
+        object.__setattr__(self, '_SAMPLE_FILE_LIMIT', SAMPLE_FILE_LIMIT)
+        object.__setattr__(self, '_LOG_LEVEL', LOG_LEVEL)
+        object.__setattr__(self, '_REST_API_TIMEOUT', REST_API_TIMEOUT)
+        object.__setattr__(self, '_JDBC_FETCH_SIZE', JDBC_FETCH_SIZE)
+        object.__setattr__(self, '_JDBC_BATCH_SIZE', JDBC_BATCH_SIZE)
+        object.__setattr__(self, '_JDBC_NUM_PARTITIONS', JDBC_NUM_PARTITIONS)
+        object.__setattr__(self, '_CACHE_STORAGE_LEVEL', CACHE_STORAGE_LEVEL or StorageLevel.MEMORY_AND_DISK)
+        object.__setattr__(self, '_RETRY_BASE_DELAY', RETRY_BASE_DELAY)
+        object.__setattr__(self, '_RETRY_MAX_DELAY', RETRY_MAX_DELAY)
+        object.__setattr__(self, '_CDC_SAMPLE_SIZE', CDC_SAMPLE_SIZE)
+        object.__setattr__(self, '_ENABLE_SCHEMA_EVOLUTION', ENABLE_SCHEMA_EVOLUTION)
+    
+    @property
+    def BATCH_SIZE(self) -> int:
+        return self._BATCH_SIZE
+    
+    @property
+    def MAX_RETRIES(self) -> int:
+        return self._MAX_RETRIES
+    
+    @property
+    def MAX_WORKERS(self) -> int:
+        return self._MAX_WORKERS
+    
+    @property
+    def COMPUTE_ROW_COUNT(self) -> bool:
+        return self._COMPUTE_ROW_COUNT
+    
+    @property
+    def SAMPLE_FILE_LIMIT(self) -> int:
+        return self._SAMPLE_FILE_LIMIT
+    
+    @property
+    def LOG_LEVEL(self) -> str:
+        return self._LOG_LEVEL
+    
+    @property
+    def REST_API_TIMEOUT(self) -> int:
+        return self._REST_API_TIMEOUT
+    
+    @property
+    def JDBC_FETCH_SIZE(self) -> int:
+        return self._JDBC_FETCH_SIZE
+    
+    @property
+    def JDBC_BATCH_SIZE(self) -> int:
+        return self._JDBC_BATCH_SIZE
+    
+    @property
+    def JDBC_NUM_PARTITIONS(self) -> int:
+        return self._JDBC_NUM_PARTITIONS
+    
+    @property
+    def CACHE_STORAGE_LEVEL(self) -> StorageLevel:
+        return self._CACHE_STORAGE_LEVEL
+    
+    @property
+    def RETRY_BASE_DELAY(self) -> float:
+        return self._RETRY_BASE_DELAY
+    
+    @property
+    def RETRY_MAX_DELAY(self) -> float:
+        return self._RETRY_MAX_DELAY
+    
+    @property
+    def CDC_SAMPLE_SIZE(self) -> int:
+        return self._CDC_SAMPLE_SIZE
+    
+    @property
+    def ENABLE_SCHEMA_EVOLUTION(self) -> bool:
+        return self._ENABLE_SCHEMA_EVOLUTION
+    
+    def __setattr__(self, name, value):
+        raise AttributeError("CollectorConfig is immutable")
     
     def with_row_count(self, enabled: bool) -> 'CollectorConfig':
         """Create new config with row count setting changed"""
@@ -338,9 +425,15 @@ def to_snake_case_array_expr(col: Column) -> Column:
 def is_dataframe_empty(df: DataFrame) -> bool:
     """
     Efficiently check if DataFrame is empty without triggering full scan.
-    Uses limit(1) which is much faster than isEmpty() or count().
+    Uses limit(1).collect() which is much faster than isEmpty() or count().
+    Works across all Spark versions.
     """
-    return df.head(1) is None
+    try:
+        # limit(1).collect() returns empty list [] if DataFrame is empty
+        return len(df.limit(1).collect()) == 0
+    except Exception:
+        # Fallback to count for edge cases
+        return df.count() == 0
 
 
 def safe_get(d: Optional[Dict], key: str, default: Any = None) -> Any:
@@ -1879,6 +1972,18 @@ class RequestsHTTPClient(HTTPClient):
 # ============================================================================
 
 
+def _get_row_value(row, key: str, default: Any = None) -> Any:
+    """
+    Safely get value from Spark Row object.
+    Spark Row objects don't support .get() method in newer versions.
+    """
+    try:
+        value = row[key]
+        return value if value is not None else default
+    except (KeyError, ValueError):
+        return default
+
+
 def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
     """
     Parse connection configurations from DataFrame.
@@ -1887,7 +1992,7 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
     connections = []
     
     # Filter active sources and collect (should be small dataset)
-    active_sources = config_df.filter(F.col("is_active") == True).collect()
+    active_sources = config_df.filter(F.col("is_active") == 1).collect()
     
     for row in active_sources:
         try:
@@ -1903,8 +2008,8 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
                 conn = StorageConnectionDetails(
                     source_id=row["id"],
                     catalog_name=row["catalog_name"],
-                    table_name=row.get("table_name"),
-                    metadata_enabled=row.get("metadata_enabled", True),
+                    table_name=_get_row_value(row, "table_name"),
+                    metadata_enabled=_get_row_value(row, "metadata_enabled", True),
                     is_active=row["is_active"],
                     db_details=db_details,
                     storage_name=db_details.get('storage_name', ''),
@@ -1920,8 +2025,8 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
                 conn = RESTAPIConnectionDetails(
                     source_id=row["id"],
                     catalog_name=row["catalog_name"],
-                    table_name=row.get("table_name"),
-                    metadata_enabled=row.get("metadata_enabled", True),
+                    table_name=_get_row_value(row, "table_name"),
+                    metadata_enabled=_get_row_value(row, "metadata_enabled", True),
                     is_active=row["is_active"],
                     db_details=db_details,
                     base_url=db_details.get('base_url', ''),
@@ -1937,8 +2042,8 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
                 conn = SQLConnectionDetails(
                     source_id=row["id"],
                     catalog_name=row["catalog_name"],
-                    table_name=row.get("table_name"),
-                    metadata_enabled=row.get("metadata_enabled", True),
+                    table_name=_get_row_value(row, "table_name"),
+                    metadata_enabled=_get_row_value(row, "metadata_enabled", True),
                     is_active=row["is_active"],
                     db_details=db_details,
                     db_host=db_details.get('db_host', ''),
@@ -1957,7 +2062,8 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
             
         except Exception as e:
             # Log error but continue with other connections
-            print(f"Warning: Failed to parse connection {row.get('id', 'unknown')}: {str(e)}")
+            source_id = _get_row_value(row, 'id', 'unknown')
+            print(f"Warning: Failed to parse connection {source_id}: {str(e)}")
             continue
     
     return connections
