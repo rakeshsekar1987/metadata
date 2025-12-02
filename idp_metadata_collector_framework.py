@@ -436,7 +436,7 @@ def is_dataframe_empty(df: DataFrame) -> bool:
     """
     try:
         # limit(1).collect() returns empty list [] if DataFrame is empty
-        return len(df.limit(1).collect()) == 0
+        return _builtin_len(df.limit(1).collect()) == 0
     except Exception:
         # Fallback to count for edge cases
         return df.count() == 0
@@ -890,7 +890,7 @@ class SQLMetadataCollector(MetadataCollector):
         table_conditions = []
         for table in tables[:50]:
             parts = table.split('.')
-            if len(parts) == 2:
+            if _builtin_len(parts) == 2:
                 schema, tbl = parts
                 table_conditions.append(f"(s.name = '{schema}' AND t.name = '{tbl}')")
         
@@ -917,7 +917,7 @@ class SQLMetadataCollector(MetadataCollector):
         table_conditions = []
         for table in tables[:50]:
             parts = table.split('.')
-            if len(parts) == 2:
+            if _builtin_len(parts) == 2:
                 schema, tbl = parts
                 table_conditions.append(
                     f"(schemaname = '{schema}' AND tablename = '{tbl}')"
@@ -941,7 +941,7 @@ class SQLMetadataCollector(MetadataCollector):
         table_names = []
         for table in tables[:50]:
             parts = table.split('.')
-            if len(parts) == 2:
+            if _builtin_len(parts) == 2:
                 table_names.append(f"'{parts[1]}'")
             else:
                 table_names.append(f"'{table}'")
@@ -1115,7 +1115,7 @@ class StorageMetadataCollector(MetadataCollector):
                 
                 # Use inferred schema if available
                 source_schema = schema_info.get('columns', [])
-                column_count = len(source_schema)
+                column_count = _builtin_len(source_schema)
                 
                 # Match ID columns (case-insensitive)
                 id_columns = []
@@ -1395,7 +1395,7 @@ class RESTAPIMetadataCollector(MetadataCollector):
                 "partition_cols": [],
                 "ct_enabled": 0,
                 "source_schema": source_schema,
-                "column_count": len(source_schema),
+                "column_count": _builtin_len(source_schema),
                 "table_row_count": None,
                 "table_size": None,
                 "api_endpoint": url,
@@ -1631,7 +1631,7 @@ class DuplicateHandler:
             
             # Collect duplicate IDs (should be small)
             dup_ids = [row["id"] for row in dup_ids_df.collect()]
-            self.logger.info(f"Resolving {len(dup_ids)} duplicate IDs")
+            self.logger.info(f"Resolving {_builtin_len(dup_ids)} duplicate IDs")
             
             # Broadcast for efficient filtering
             dup_ids_bc = df.sparkSession.sparkContext.broadcast(set(dup_ids))
@@ -1714,7 +1714,7 @@ class MetadataCollectionOrchestrator:
         """
         self.logger.info(
             f"Starting metadata collection",
-            source_count=len(connections),
+            source_count=_builtin_len(connections),
             mode="FULL" if full_load else "INCREMENTAL"
         )
         
@@ -1722,7 +1722,7 @@ class MetadataCollectionOrchestrator:
         all_metadata_dfs: List[DataFrame] = []
         
         # Process in batches
-        for batch_start in range(0, len(connections), self.config.BATCH_SIZE):
+        for batch_start in range(0, _builtin_len(connections), self.config.BATCH_SIZE):
             batch_end = _builtin_min(batch_start + self.config.BATCH_SIZE, _builtin_len(connections))
             batch = connections[batch_start:batch_end]
             batch_num = batch_start // self.config.BATCH_SIZE + 1
@@ -1889,7 +1889,7 @@ class MetadataCollectionOrchestrator:
     
     def _combine_dataframes(self, dfs: List[DataFrame]) -> DataFrame:
         """Combine multiple DataFrames with schema alignment"""
-        if len(dfs) == 1:
+        if _builtin_len(dfs) == 1:
             return dfs[0]
         
         # Use reduce for cleaner combination
@@ -2313,7 +2313,7 @@ def main_notebook_execution(dbutils, spark: SparkSession) -> str:
     success_count = summary_df.filter(F.col("status") == "Success").count()
     failure_count = summary_df.filter(F.col("status") == "Failure").count()
     
-    print(f"\nTotal sources processed: {len(connections)}")
+    print(f"\nTotal sources processed: {_builtin_len(connections)}")
     print(f"Successful: {success_count}")
     print(f"Failed: {failure_count}")
     print("=" * 70)
