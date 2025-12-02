@@ -1800,12 +1800,32 @@ class MetadataCollectionOrchestrator:
                     source_id=connection.source_id
                 )
                 
-                # Get data source type
-                ds_type_str = safe_get(connection.db_details, 'data_source_type')
+                # Get data source type using flexible key lookup
+                ds_type_str = _get_data_source_type(connection.db_details or {})
                 if not ds_type_str:
-                    raise ValueError("data_source_type not found in db_details")
+                    available_keys = list((connection.db_details or {}).keys())
+                    raise ValueError(
+                        f"data_source_type not found in db_details. "
+                        f"Available keys: {available_keys[:10]}"  # Show first 10 keys
+                    )
                 
-                data_source_type = DataSourceType(ds_type_str)
+                # Try to match the data source type
+                try:
+                    data_source_type = DataSourceType(ds_type_str)
+                except ValueError:
+                    # Try to match partial names
+                    ds_type_upper = ds_type_str.upper()
+                    matched = None
+                    for dst in DataSourceType:
+                        if dst.value in ds_type_upper or ds_type_upper in dst.value:
+                            matched = dst
+                            break
+                    if not matched:
+                        raise ValueError(
+                            f"Unknown data_source_type: '{ds_type_str}'. "
+                            f"Supported types: {[t.value for t in DataSourceType]}"
+                        )
+                    data_source_type = matched
                 collector = self.collector_factory.get_collector(data_source_type)
                 
                 # Validate connection
@@ -2158,6 +2178,36 @@ def _get_row_value(row, key: str, default: Any = None) -> Any:
         return default
 
 
+def _get_data_source_type(db_details: Dict[str, Any]) -> str:
+    """
+    Extract data source type from db_details, trying multiple possible key names.
+    Returns empty string if not found.
+    """
+    # List of possible key names for data source type
+    possible_keys = [
+        'data_source_type',
+        'dataSourceType', 
+        'datasource_type',
+        'source_type',
+        'sourceType',
+        'type',
+        'Type',
+        'connection_type',
+        'connectionType',
+        'db_type',
+        'dbType',
+        'database_type',
+        'databaseType'
+    ]
+    
+    for key in possible_keys:
+        value = db_details.get(key)
+        if value:
+            return str(value).upper()
+    
+    return ''
+
+
 def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
     """
     Parse connection configurations from DataFrame.
@@ -2176,10 +2226,23 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
             if isinstance(db_details, str):
                 db_details = json.loads(db_details)
             
-            data_source_type = db_details.get('data_source_type', '')
+            # Handle case where db_details might be None or not a dict
+            if db_details is None:
+                db_details = {}
+            elif not isinstance(db_details, dict):
+                # Try to convert if it's a Row or similar
+                try:
+                    db_details = dict(db_details) if hasattr(db_details, 'asDict') else db_details.asDict() if hasattr(db_details, 'asDict') else {}
+                except Exception:
+                    db_details = {}
+            
+            data_source_type = _get_data_source_type(db_details)
+            
+            # Normalize data source type for matching
+            ds_type_upper = data_source_type.upper() if data_source_type else ''
             
             # Create appropriate connection type
-            if any(storage_type in data_source_type for storage_type in ["STORAGE", "ABFSS", "WABS"]):
+            if any(storage_type in ds_type_upper for storage_type in ["STORAGE", "ABFSS", "WABS", "BLOB", "ADLS", "S3", "GCS"]):
                 conn = StorageConnectionDetails(
                     source_id=row["id"],
                     catalog_name=row["catalog_name"],
@@ -2196,7 +2259,7 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
                     id_columns=db_details.get('id_columns') or []
                 )
             
-            elif data_source_type == DataSourceType.REST_API.value:
+            elif ds_type_upper in ["REST_API", "RESTAPI", "REST", "API", "HTTP", "HTTPS"]:
                 conn = RESTAPIConnectionDetails(
                     source_id=row["id"],
                     catalog_name=row["catalog_name"],
