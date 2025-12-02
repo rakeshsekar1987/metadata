@@ -597,8 +597,8 @@ class SQLMetadataCollector(MetadataCollector):
         df = df.persist(self.config.CACHE_STORAGE_LEVEL)
         
         try:
-            # Process and transform metadata
-            processed_df = self._process_sql_metadata(df, connection)
+            # Process and transform metadata (include JDBC info for partition column detection)
+            processed_df = self._process_sql_metadata(df, connection, jdbc_url, jdbc_props)
             
             # Compute row counts and table sizes if enabled (expensive)
             if self.config.COMPUTE_ROW_COUNT:
@@ -753,7 +753,13 @@ class SQLMetadataCollector(MetadataCollector):
                 WHERE {where_clause}
             """
     
-    def _process_sql_metadata(self, df: DataFrame, connection: SQLConnectionDetails) -> DataFrame:
+    def _process_sql_metadata(
+        self, 
+        df: DataFrame, 
+        connection: SQLConnectionDetails,
+        jdbc_url: str = None,
+        jdbc_props: Dict[str, str] = None
+    ) -> DataFrame:
         """
         Process raw SQL metadata into standard format.
         Uses native Spark functions for performance.
@@ -781,13 +787,119 @@ class SQLMetadataCollector(MetadataCollector):
                 "id_columns",
                 F.array_except(F.col("id_columns_raw"), F.array(F.lit(None).cast(StringType())))
             )
-            .withColumn("partition_cols", F.array().cast(ArrayType(StringType())))
             .withColumn("ct_enabled", F.lit(1 if connection.is_ct_enabled else 0))
             .withColumn("db_name", F.lit(connection.db_name))
             .drop("id_columns_raw")
         )
         
+        # Add partition columns if JDBC connection info is available
+        if jdbc_url and jdbc_props:
+            processed_df = self._add_partition_columns(processed_df, connection, jdbc_url, jdbc_props)
+        else:
+            processed_df = processed_df.withColumn("partition_cols", F.array().cast(ArrayType(StringType())))
+        
         return processed_df
+    
+    def _add_partition_columns(
+        self,
+        df: DataFrame,
+        connection: SQLConnectionDetails,
+        jdbc_url: str,
+        jdbc_props: Dict[str, str]
+    ) -> DataFrame:
+        """
+        Add partition column information for SQL tables.
+        Queries system tables to find partitioned tables and their partition columns.
+        """
+        db_type = safe_get(connection.db_details, 'data_source_type', '').upper()
+        
+        try:
+            if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
+                # SQL Server partition column query
+                partition_query = """
+                    SELECT 
+                        CONCAT(s.name, '.', t.name) AS full_table_name,
+                        c.name AS partition_column
+                    FROM sys.tables t
+                    INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+                    INNER JOIN sys.indexes i ON t.object_id = i.object_id
+                    INNER JOIN sys.index_columns ic ON i.object_id = ic.object_id 
+                        AND i.index_id = ic.index_id
+                    INNER JOIN sys.columns c ON ic.object_id = c.object_id 
+                        AND ic.column_id = c.column_id
+                    INNER JOIN sys.partition_schemes ps ON i.data_space_id = ps.data_space_id
+                    WHERE ic.partition_ordinal > 0
+                """
+            elif 'POSTGRESQL' in db_type:
+                # PostgreSQL partition column query
+                partition_query = """
+                    SELECT 
+                        CONCAT(n.nspname, '.', c.relname) AS full_table_name,
+                        a.attname AS partition_column
+                    FROM pg_partitioned_table pt
+                    JOIN pg_class c ON c.oid = pt.partrelid
+                    JOIN pg_namespace n ON n.oid = c.relnamespace
+                    JOIN pg_attribute a ON a.attrelid = c.oid
+                    WHERE a.attnum = ANY(pt.partattrs)
+                """
+            else:
+                # MariaDB/MySQL - check for partitioned tables
+                partition_query = f"""
+                    SELECT 
+                        CONCAT(TABLE_SCHEMA, '.', TABLE_NAME) AS full_table_name,
+                        PARTITION_EXPRESSION AS partition_column
+                    FROM information_schema.PARTITIONS
+                    WHERE TABLE_SCHEMA = '{connection.db_name}'
+                        AND PARTITION_NAME IS NOT NULL
+                    GROUP BY TABLE_SCHEMA, TABLE_NAME, PARTITION_EXPRESSION
+                """
+            
+            # Execute partition query
+            partition_df = (
+                self.spark.read
+                .format("jdbc")
+                .option("url", jdbc_url)
+                .option("query", partition_query)
+                .options(**jdbc_props)
+                .load()
+            )
+            
+            if is_dataframe_empty(partition_df):
+                return df.withColumn("partition_cols", F.array().cast(ArrayType(StringType())))
+            
+            # Group partition columns by table
+            partition_agg_df = (
+                partition_df
+                .groupBy("full_table_name")
+                .agg(F.collect_list("partition_column").alias("_partition_cols"))
+            )
+            
+            # Join with main DataFrame using broadcast for small lookup
+            partition_lookup = F.broadcast(
+                partition_agg_df.select(
+                    F.col("full_table_name").alias("_part_table"),
+                    F.col("_partition_cols")
+                )
+            )
+            
+            result_df = (
+                df.join(
+                    partition_lookup,
+                    F.col("full_table_name") == F.col("_part_table"),
+                    "left"
+                )
+                .withColumn(
+                    "partition_cols",
+                    F.coalesce(F.col("_partition_cols"), F.array().cast(ArrayType(StringType())))
+                )
+                .drop("_part_table", "_partition_cols")
+            )
+            
+            return result_df
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to get partition columns: {str(e)}")
+            return df.withColumn("partition_cols", F.array().cast(ArrayType(StringType())))
     
     def _add_sql_row_counts_optimized(
         self,
@@ -1181,11 +1293,14 @@ class StorageMetadataCollector(MetadataCollector):
                         if c.lower() in schema_lower
                     ]
                 
+                # Extract partition columns from path (e.g., /year=2023/month=01/)
+                partition_cols = self._extract_partition_cols_from_path(file_info['path'])
+                
                 metadata_rows.append({
                     "full_table_name": file_info['path'],
                     "table_name": file_name,
                     "id_columns": id_columns,
-                    "partition_cols": [],
+                    "partition_cols": partition_cols,
                     "ct_enabled": 0,
                     "source_schema": source_schema,
                     "column_count": column_count,
@@ -1198,6 +1313,27 @@ class StorageMetadataCollector(MetadataCollector):
                 continue
         
         return metadata_rows
+    
+    def _extract_partition_cols_from_path(self, path: str) -> List[str]:
+        """
+        Extract partition column names from file path.
+        Looks for patterns like /key=value/ in the path (Hive-style partitioning).
+        
+        Examples:
+            /data/year=2023/month=01/file.parquet -> ['year', 'month']
+            /data/region=us/date=2023-01-01/data.parquet -> ['region', 'date']
+        """
+        partition_cols = []
+        
+        # Pattern to match key=value in path segments
+        partition_pattern = re.compile(r'/([a-zA-Z_][a-zA-Z0-9_]*)=([^/]+)/')
+        
+        matches = partition_pattern.findall(path)
+        if matches:
+            # Extract just the column names (keys), not values
+            partition_cols = [match[0] for match in matches]
+        
+        return partition_cols
     
     def _infer_schema_from_files(
         self,
