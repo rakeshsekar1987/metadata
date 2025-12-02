@@ -49,6 +49,7 @@ from functools import lru_cache
 _builtin_min = builtins.min
 _builtin_max = builtins.max
 _builtin_len = builtins.len
+_builtin_round = builtins.round
 
 import pyspark.sql.functions as F
 from pyspark.sql import DataFrame, SparkSession, Column
@@ -2028,7 +2029,7 @@ class MetadataCollectionOrchestrator:
                 r.status,
                 r.error_message,
                 r.row_count,
-                round(r.duration_seconds, 2),
+                _builtin_round(r.duration_seconds, 2) if r.duration_seconds else 0.0,
                 r.retry_count
             )
             for r in self.results
