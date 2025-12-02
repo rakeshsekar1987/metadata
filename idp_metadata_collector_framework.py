@@ -570,8 +570,9 @@ class SQLMetadataCollector(MetadataCollector):
         """Collect metadata from SQL database with optimized JDBC reads"""
         self.logger.info(f"Collecting SQL metadata", source_id=connection.source_id)
         
-        # Get password from secret provider
-        password = self.secret_provider.get_secret(connection.password_key)
+        # Get password from secret provider (check for per-connection secret_scope)
+        secret_scope = safe_get(connection.db_details, 'secret_scope')
+        password = self.secret_provider.get_secret(connection.password_key, scope=secret_scope)
         
         # Build JDBC URL with connection pool settings
         jdbc_url = self._build_jdbc_url(connection)
@@ -1066,7 +1067,9 @@ class StorageMetadataCollector(MetadataCollector):
     def _configure_storage_access(self, connection: StorageConnectionDetails) -> None:
         """Configure Spark for storage access"""
         try:
-            access_key = self.secret_provider.get_secret(connection.storage_access_key)
+            # Get storage access key (check for per-connection secret_scope)
+            secret_scope = safe_get(connection.db_details, 'secret_scope')
+            access_key = self.secret_provider.get_secret(connection.storage_access_key, scope=secret_scope)
             storage_type = safe_get(connection.db_details, 'data_source_type')
             
             if storage_type == DataSourceType.ABFSS_STORAGE.value:
@@ -1364,11 +1367,14 @@ class RESTAPIMetadataCollector(MetadataCollector):
         # Prepare authentication headers
         headers = dict(connection.headers) if connection.headers else {}
         
+        # Check for per-connection secret_scope
+        secret_scope = safe_get(connection.db_details, 'secret_scope')
+        
         if connection.auth_type == "API_KEY" and connection.auth_key:
-            api_key = self.secret_provider.get_secret(connection.auth_key)
+            api_key = self.secret_provider.get_secret(connection.auth_key, scope=secret_scope)
             headers["Authorization"] = f"Bearer {api_key}"
         elif connection.auth_type == "BASIC_AUTH" and connection.auth_key:
-            credentials = self.secret_provider.get_secret(connection.auth_key)
+            credentials = self.secret_provider.get_secret(connection.auth_key, scope=secret_scope)
             import base64
             encoded = base64.b64encode(credentials.encode()).decode()
             headers["Authorization"] = f"Basic {encoded}"
@@ -2070,22 +2076,43 @@ class DatabricksSecretProvider(SecretProvider):
     
     def __init__(self, dbutils: Any, scope: str = "idp-secrets"):
         self.dbutils = dbutils
-        self.scope = scope
+        self.default_scope = scope
         self._cache: Dict[str, str] = {}
     
-    def get_secret(self, key: str, default: Optional[str] = None) -> str:
-        """Get secret from Databricks secret scope with caching"""
-        if key in self._cache:
-            return self._cache[key]
+    def get_secret(self, key: str, default: Optional[str] = None, scope: Optional[str] = None) -> str:
+        """
+        Get secret from Databricks secret scope with caching.
+        
+        Args:
+            key: The secret key name
+            default: Optional default value if secret not found
+            scope: Optional scope override (uses default_scope if not provided)
+        
+        Returns:
+            The secret value
+        """
+        # Use provided scope or fall back to default
+        secret_scope = scope or self.default_scope
+        cache_key = f"{secret_scope}:{key}"
+        
+        if cache_key in self._cache:
+            return self._cache[cache_key]
         
         try:
-            value = self.dbutils.secrets.get(scope=self.scope, key=key)
-            self._cache[key] = value
+            value = self.dbutils.secrets.get(scope=secret_scope, key=key)
+            self._cache[cache_key] = value
             return value
-        except Exception:
+        except Exception as e:
             if default is not None:
                 return default
-            raise
+            # Provide more helpful error message
+            raise ValueError(
+                f"Secret not found: key='{key}' in scope='{secret_scope}'. "
+                f"Please verify: 1) The secret scope '{secret_scope}' exists, "
+                f"2) The secret key '{key}' exists in that scope, "
+                f"3) You have access to the secret. "
+                f"Original error: {str(e)}"
+            )
 
 
 class DatabricksDataFrameWriter(DataFrameWriter):
@@ -2365,17 +2392,19 @@ def main_notebook_execution(dbutils, spark: SparkSession) -> str:
     dbutils.widgets.text("full_load", "False", "Full Load?")
     dbutils.widgets.text("job_run_id", "", "Job Run ID")
     dbutils.widgets.text("compute_row_count", "False", "Compute Row Counts?")
+    dbutils.widgets.text("secret_scope", "idp-secrets", "Secret Scope Name")
     
     # Parse widget values
     full_load = dbutils.widgets.get("full_load").strip().lower() == "true"
     job_run_id = dbutils.widgets.get("job_run_id").strip() or str(uuid4())
     compute_row_count = dbutils.widgets.get("compute_row_count").strip().lower() == "true"
+    secret_scope = dbutils.widgets.get("secret_scope").strip() or "idp-secrets"
     
     # Setup configuration
     config = CollectorConfig().with_row_count(compute_row_count)
     
-    # Initialize components
-    secret_provider = DatabricksSecretProvider(dbutils)
+    # Initialize components - use the configurable secret scope
+    secret_provider = DatabricksSecretProvider(dbutils, scope=secret_scope)
     df_reader = DatabricksDataFrameReader(spark)
     df_writer = DatabricksDataFrameWriter(spark)
     http_client = RequestsHTTPClient()
