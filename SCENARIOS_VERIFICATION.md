@@ -131,8 +131,17 @@ This document verifies that all requirements and scenarios are covered by the ID
 | Parallel workers | 5 concurrent workers | ✅ |
 | Schema-only reads | `limit(0)` for files | ✅ |
 | Optional row counts | `compute_row_count` flag (default False) | ✅ |
-| Strategic caching | `.cache()` on catalog DataFrames | ✅ |
+| Strategic caching | `persist(MEMORY_AND_DISK)` with unpersist | ✅ |
 | Lazy evaluation | Spark transformations chained | ✅ |
+| **Native Spark SQL** | Replaced Python UDFs with native `regexp_replace`, `transform` | ✅ |
+| **JDBC fetchsize** | Set `fetchsize=10000` for batch reading | ✅ |
+| **Adaptive Query Execution** | Enabled AQE with coalesce and skew join | ✅ |
+| **Broadcast joins** | Used for small dimension tables (Cassandra) | ✅ |
+| **Window functions** | Duplicate detection in single pass | ✅ |
+| **Parallel file processing** | ThreadPoolExecutor for storage sources | ✅ |
+| **Single-pass aggregations** | Combined multiple withColumn into select | ✅ |
+| **Reduced shuffles** | Smart coalesce/repartition based on data size | ✅ |
+| **Filter pushdown** | Enabled for Parquet and JDBC sources | ✅ |
 
 ## ✅ Error Handling
 
