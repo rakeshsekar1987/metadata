@@ -834,17 +834,20 @@ class SQLMetadataCollector(MetadataCollector):
                 .option("query", f"SELECT * FROM ({combined_query}) AS counts")
                 .options(**jdbc_props)
                 .load()
+                # Rename columns to avoid conflicts with original df columns
+                .withColumnRenamed("table_name", "_count_table_name")
+                .withColumnRenamed("row_count", "_row_count")
             )
             
             # Join counts back to main DataFrame
             result_df = df.join(
                 counts_df,
-                df["full_table_name"] == counts_df["table_name"],
+                df["full_table_name"] == counts_df["_count_table_name"],
                 "left"
             ).withColumn(
                 "table_row_count",
-                F.col("row_count").cast(LongType())
-            ).drop("table_name", "row_count")
+                F.col("_row_count").cast(LongType())
+            ).drop("_count_table_name", "_row_count")
             
             # Now get table sizes
             result_df = self._add_sql_table_sizes(
@@ -899,17 +902,20 @@ class SQLMetadataCollector(MetadataCollector):
                 .option("query", size_query)
                 .options(**jdbc_props)
                 .load()
+                # Rename columns to avoid conflicts with original df columns
+                .withColumnRenamed("table_name", "_size_table_name")
+                .withColumnRenamed("size_bytes", "_size_bytes")
             )
             
             # Join sizes back to main DataFrame
             return df.join(
                 sizes_df,
-                df["full_table_name"] == sizes_df["table_name"],
+                df["full_table_name"] == sizes_df["_size_table_name"],
                 "left"
             ).withColumn(
                 "table_size",
-                F.col("size_bytes").cast(LongType())
-            ).drop("table_name", "size_bytes")
+                F.col("_size_bytes").cast(LongType())
+            ).drop("_size_table_name", "_size_bytes")
             
         except Exception as e:
             self.logger.warning(f"Failed to get table sizes: {str(e)}")
