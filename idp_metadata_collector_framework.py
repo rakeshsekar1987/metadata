@@ -702,6 +702,8 @@ class SQLMetadataCollector(MetadataCollector):
         where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
         
         if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
+            # Note: ORDER BY removed - not allowed in subqueries in SQL Server
+            # Ordering will be done in Spark after data is loaded
             return f"""
                 SELECT 
                     CONCAT(c.TABLE_SCHEMA, '.', c.TABLE_NAME) AS full_table_name,
@@ -723,10 +725,10 @@ class SQLMetadataCollector(MetadataCollector):
                     AND c.TABLE_NAME = pk.TABLE_NAME 
                     AND c.COLUMN_NAME = pk.COLUMN_NAME
                 WHERE {where_clause}
-                ORDER BY c.TABLE_SCHEMA, c.TABLE_NAME, c.ORDINAL_POSITION
             """
         else:
             # PostgreSQL/MariaDB query with primary key detection
+            # Note: ORDER BY removed for consistency, ordering done in Spark
             return f"""
                 SELECT 
                     CONCAT(c.table_schema, '.', c.table_name) AS full_table_name,
@@ -748,7 +750,6 @@ class SQLMetadataCollector(MetadataCollector):
                     AND c.table_name = pk.table_name 
                     AND c.column_name = pk.column_name
                 WHERE {where_clause}
-                ORDER BY c.table_schema, c.table_name, c.ordinal_position
             """
     
     def _process_sql_metadata(self, df: DataFrame, connection: SQLConnectionDetails) -> DataFrame:
