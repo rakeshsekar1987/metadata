@@ -592,10 +592,17 @@ class SQLMetadataCollector(MetadataCollector):
             # Process and transform metadata
             processed_df = self._process_sql_metadata(df, connection)
             
-            # Compute row counts if enabled (expensive)
+            # Compute row counts and table sizes if enabled (expensive)
             if self.config.COMPUTE_ROW_COUNT:
                 processed_df = self._add_sql_row_counts_optimized(
                     processed_df, connection, jdbc_url, jdbc_props
+                )
+            else:
+                # Add null columns for row count and table size
+                processed_df = (
+                    processed_df
+                    .withColumn("table_row_count", F.lit(None).cast(LongType()))
+                    .withColumn("table_size", F.lit(None).cast(LongType()))
                 )
             
             return self.enrich_metadata(processed_df, connection)
@@ -752,16 +759,20 @@ class SQLMetadataCollector(MetadataCollector):
         jdbc_props: Dict[str, str]
     ) -> DataFrame:
         """
-        Add row counts for SQL tables using optimized batch query.
+        Add row counts and table sizes for SQL tables using optimized batch query.
         Uses UNION ALL for single database round-trip.
         """
-        self.logger.info(f"Computing row counts", source_id=connection.source_id)
+        self.logger.info(f"Computing row counts and table sizes", source_id=connection.source_id)
         
         # Collect table names (small dataset, safe to collect)
         tables = [row["full_table_name"] for row in df.select("full_table_name").distinct().collect()]
         
         if not tables:
-            return df.withColumn("table_row_count", F.lit(None).cast(LongType()))
+            return (
+                df
+                .withColumn("table_row_count", F.lit(None).cast(LongType()))
+                .withColumn("table_size", F.lit(None).cast(LongType()))
+            )
         
         # Build single query for all tables using UNION ALL
         count_queries = [
@@ -770,7 +781,11 @@ class SQLMetadataCollector(MetadataCollector):
         ]
         
         if not count_queries:
-            return df.withColumn("table_row_count", F.lit(None).cast(LongType()))
+            return (
+                df
+                .withColumn("table_row_count", F.lit(None).cast(LongType()))
+                .withColumn("table_size", F.lit(None).cast(LongType()))
+            )
         
         combined_query = " UNION ALL ".join(count_queries)
         
@@ -785,7 +800,7 @@ class SQLMetadataCollector(MetadataCollector):
             )
             
             # Join counts back to main DataFrame
-            return df.join(
+            result_df = df.join(
                 counts_df,
                 df["full_table_name"] == counts_df["table_name"],
                 "left"
@@ -794,9 +809,150 @@ class SQLMetadataCollector(MetadataCollector):
                 F.col("row_count").cast(LongType())
             ).drop("table_name", "row_count")
             
+            # Now get table sizes
+            result_df = self._add_sql_table_sizes(
+                result_df, connection, jdbc_url, jdbc_props, tables
+            )
+            
+            return result_df
+            
         except Exception as e:
             self.logger.warning(f"Failed to get row counts: {str(e)}")
-            return df.withColumn("table_row_count", F.lit(None).cast(LongType()))
+            return (
+                df
+                .withColumn("table_row_count", F.lit(None).cast(LongType()))
+                .withColumn("table_size", F.lit(None).cast(LongType()))
+            )
+    
+    def _add_sql_table_sizes(
+        self,
+        df: DataFrame,
+        connection: SQLConnectionDetails,
+        jdbc_url: str,
+        jdbc_props: Dict[str, str],
+        tables: List[str]
+    ) -> DataFrame:
+        """
+        Add table sizes in bytes for SQL tables.
+        Uses database-specific queries to get table sizes.
+        """
+        db_type = safe_get(connection.db_details, 'data_source_type')
+        
+        try:
+            if db_type == DataSourceType.SQLSERVER.value:
+                # SQL Server: Use sp_spaceused or sys tables
+                size_query = self._build_sqlserver_size_query(tables, connection.db_name)
+            elif db_type == DataSourceType.POSTGRESQL.value:
+                # PostgreSQL: Use pg_total_relation_size
+                size_query = self._build_postgresql_size_query(tables)
+            elif db_type == DataSourceType.MARIADB.value:
+                # MariaDB/MySQL: Use information_schema.tables
+                size_query = self._build_mariadb_size_query(tables, connection.db_name)
+            else:
+                self.logger.warning(f"Table size not supported for {db_type}")
+                return df.withColumn("table_size", F.lit(None).cast(LongType()))
+            
+            if not size_query:
+                return df.withColumn("table_size", F.lit(None).cast(LongType()))
+            
+            sizes_df = (
+                self.spark.read
+                .format("jdbc")
+                .option("url", jdbc_url)
+                .option("query", size_query)
+                .options(**jdbc_props)
+                .load()
+            )
+            
+            # Join sizes back to main DataFrame
+            return df.join(
+                sizes_df,
+                df["full_table_name"] == sizes_df["table_name"],
+                "left"
+            ).withColumn(
+                "table_size",
+                F.col("size_bytes").cast(LongType())
+            ).drop("table_name", "size_bytes")
+            
+        except Exception as e:
+            self.logger.warning(f"Failed to get table sizes: {str(e)}")
+            return df.withColumn("table_size", F.lit(None).cast(LongType()))
+    
+    def _build_sqlserver_size_query(self, tables: List[str], db_name: str) -> str:
+        """Build SQL Server query to get table sizes"""
+        # Parse schema.table format
+        table_conditions = []
+        for table in tables[:50]:
+            parts = table.split('.')
+            if len(parts) == 2:
+                schema, tbl = parts
+                table_conditions.append(f"(s.name = '{schema}' AND t.name = '{tbl}')")
+        
+        if not table_conditions:
+            return ""
+        
+        conditions = " OR ".join(table_conditions)
+        
+        return f"""
+            SELECT 
+                CONCAT(s.name, '.', t.name) AS table_name,
+                SUM(a.total_pages) * 8 * 1024 AS size_bytes
+            FROM sys.tables t
+            INNER JOIN sys.schemas s ON t.schema_id = s.schema_id
+            INNER JOIN sys.indexes i ON t.object_id = i.object_id
+            INNER JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
+            INNER JOIN sys.allocation_units a ON p.partition_id = a.container_id
+            WHERE ({conditions})
+            GROUP BY s.name, t.name
+        """
+    
+    def _build_postgresql_size_query(self, tables: List[str]) -> str:
+        """Build PostgreSQL query to get table sizes"""
+        table_conditions = []
+        for table in tables[:50]:
+            parts = table.split('.')
+            if len(parts) == 2:
+                schema, tbl = parts
+                table_conditions.append(
+                    f"(schemaname = '{schema}' AND tablename = '{tbl}')"
+                )
+        
+        if not table_conditions:
+            return ""
+        
+        conditions = " OR ".join(table_conditions)
+        
+        return f"""
+            SELECT 
+                schemaname || '.' || tablename AS table_name,
+                pg_total_relation_size(schemaname || '.' || tablename) AS size_bytes
+            FROM pg_tables
+            WHERE ({conditions})
+        """
+    
+    def _build_mariadb_size_query(self, tables: List[str], db_name: str) -> str:
+        """Build MariaDB/MySQL query to get table sizes"""
+        table_names = []
+        for table in tables[:50]:
+            parts = table.split('.')
+            if len(parts) == 2:
+                table_names.append(f"'{parts[1]}'")
+            else:
+                table_names.append(f"'{table}'")
+        
+        if not table_names:
+            return ""
+        
+        tables_list = ", ".join(table_names)
+        
+        return f"""
+            SELECT 
+                CONCAT(table_schema, '.', table_name) AS table_name,
+                (data_length + index_length) AS size_bytes
+            FROM information_schema.tables
+            WHERE table_schema = '{db_name}'
+            AND table_name IN ({tables_list})
+        """
 
 
 class StorageMetadataCollector(MetadataCollector):
@@ -861,9 +1017,14 @@ class StorageMetadataCollector(MetadataCollector):
             F.lit(sample_paths).cast(ArrayType(StringType()))
         )
         
+        # Add table_size from file_size_bytes for files
+        df = df.withColumn("table_size", F.col("file_size_bytes"))
+        
         # Compute row counts if enabled
         if self.config.COMPUTE_ROW_COUNT and connection.file_extension:
             df = self._add_file_row_counts_optimized(df, connection)
+        else:
+            df = df.withColumn("table_row_count", F.lit(None).cast(LongType()))
         
         return self.enrich_metadata(df, connection)
     
@@ -1127,6 +1288,8 @@ class CassandraMetadataCollector(MetadataCollector):
                 F.array_except(F.col("id_columns_raw"), F.array(F.lit(None).cast(StringType())))
             )
             .withColumn("partition_cols", F.array().cast(ArrayType(StringType())))
+            .withColumn("table_row_count", F.lit(None).cast(LongType()))
+            .withColumn("table_size", F.lit(None).cast(LongType()))
             .withColumn("ct_enabled", F.lit(0))
             .withColumn("db_name", F.lit(keyspace))
             .drop("id_columns_raw")
@@ -1227,6 +1390,8 @@ class RESTAPIMetadataCollector(MetadataCollector):
                 "ct_enabled": 0,
                 "source_schema": source_schema,
                 "column_count": len(source_schema),
+                "table_row_count": None,
+                "table_size": None,
                 "api_endpoint": url,
                 "response_format": "JSON"
             }
@@ -1244,6 +1409,8 @@ class RESTAPIMetadataCollector(MetadataCollector):
             StructField("ct_enabled", IntegerType(), True),
             StructField("source_schema", ArrayType(StringType()), True),
             StructField("column_count", IntegerType(), True),
+            StructField("table_row_count", LongType(), True),
+            StructField("table_size", LongType(), True),
             StructField("api_endpoint", StringType(), True),
             StructField("response_format", StringType(), True)
         ])
@@ -1753,6 +1920,7 @@ class MetadataCollectionOrchestrator:
             StructField("idp_created_date", TimestampType(), True),
             StructField("idp_modified_date", TimestampType(), True),
             StructField("table_row_count", LongType(), True),
+            StructField("table_size", LongType(), True),
             StructField("column_count", IntegerType(), True),
             StructField("source_schema", ArrayType(StringType()), True),
             StructField("idp_schema", ArrayType(StringType()), True),

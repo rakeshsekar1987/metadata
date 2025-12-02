@@ -239,6 +239,24 @@ print(f"Final Status: {status}")  # SUCCESS, PARTIAL_SUCCESS, or FAILURE
 | CDC hash | ~30s (N queries) | <1s | 30x |
 | Row counts | N queries | 1 query | Nx |
 
+## New Feature: table_size Column
+
+The framework now includes a `table_size` column that provides size information in bytes:
+
+### For SQL Tables
+- **SQL Server**: Uses `sys.tables` and `sys.allocation_units` to calculate total page size
+- **PostgreSQL**: Uses `pg_total_relation_size()` function
+- **MariaDB/MySQL**: Uses `data_length + index_length` from `information_schema.tables`
+
+### For Files (Storage)
+- Maps `file_size_bytes` directly to `table_size`
+- Provides the actual file size in bytes
+
+### For REST APIs and Cassandra
+- Returns `NULL` (size not applicable)
+
+**Note**: Table size computation requires `COMPUTE_ROW_COUNT=True` to be enabled.
+
 ## Supported Data Sources
 
 - **SQL Databases**: SQL Server, PostgreSQL, MariaDB

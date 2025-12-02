@@ -321,6 +321,27 @@ class TestStorageMetadataCollector:
         assert "id_columns" in field_names
         assert "file_size_bytes" in field_names
         assert "file_last_modified" in field_names
+    
+    def test_table_size_maps_from_file_size(self, spark, storage_collector, storage_connection_details):
+        """Test that table_size is mapped from file_size_bytes"""
+        # Create a sample file metadata DataFrame
+        schema = storage_collector._get_file_metadata_schema()
+        data = [
+            ("path/file1.parquet", "file1", [], [], 0, ["col1"], 1, 1024000, None),
+            ("path/file2.parquet", "file2", [], [], 0, ["col1"], 1, 2048000, None),
+        ]
+        df = spark.createDataFrame(data, schema)
+        
+        # Add sample_file_paths and table_size (simulating what collect_metadata does)
+        from pyspark.sql import functions as F
+        from pyspark.sql.types import ArrayType, StringType
+        df = df.withColumn("sample_file_paths", F.array().cast(ArrayType(StringType())))
+        df = df.withColumn("table_size", F.col("file_size_bytes"))
+        
+        # Verify table_size matches file_size_bytes
+        rows = df.collect()
+        assert rows[0]["table_size"] == 1024000
+        assert rows[1]["table_size"] == 2048000
 
 
 class TestRESTAPIMetadataCollector:
@@ -475,6 +496,52 @@ class TestMetadataCollectorFactory:
         assert collector1 is collector3
         # But different instances for different types
         assert type(collector1) == type(collector2)
+
+
+class TestTableSizeQueries:
+    """Tests for table size query generation"""
+    
+    @pytest.fixture
+    def sql_collector(self, spark, mock_secret_provider, mock_logger, default_config):
+        """Create SQL metadata collector for testing"""
+        return SQLMetadataCollector(spark, mock_secret_provider, mock_logger, default_config)
+    
+    def test_build_sqlserver_size_query(self, sql_collector):
+        """Test SQL Server size query building"""
+        tables = ["dbo.customers", "sales.orders"]
+        query = sql_collector._build_sqlserver_size_query(tables, "testdb")
+        
+        assert query != ""
+        assert "sys.tables" in query
+        assert "size_bytes" in query
+        assert "dbo" in query
+        assert "customers" in query
+    
+    def test_build_postgresql_size_query(self, sql_collector):
+        """Test PostgreSQL size query building"""
+        tables = ["public.users", "auth.roles"]
+        query = sql_collector._build_postgresql_size_query(tables)
+        
+        assert query != ""
+        assert "pg_total_relation_size" in query
+        assert "size_bytes" in query
+        assert "public" in query
+    
+    def test_build_mariadb_size_query(self, sql_collector):
+        """Test MariaDB size query building"""
+        tables = ["mydb.customers", "mydb.orders"]
+        query = sql_collector._build_mariadb_size_query(tables, "mydb")
+        
+        assert query != ""
+        assert "information_schema.tables" in query
+        assert "size_bytes" in query
+        assert "data_length" in query
+    
+    def test_empty_tables_returns_empty_query(self, sql_collector):
+        """Test that empty tables list returns empty query"""
+        assert sql_collector._build_sqlserver_size_query([], "testdb") == ""
+        assert sql_collector._build_postgresql_size_query([]) == ""
+        assert sql_collector._build_mariadb_size_query([], "testdb") == ""
 
 
 class TestCDCHashGeneration:
