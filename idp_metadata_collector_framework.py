@@ -668,89 +668,56 @@ class SQLMetadataCollector(MetadataCollector):
         return props
     
     def _build_metadata_query(self, connection: SQLConnectionDetails) -> str:
-        """Build optimized query to fetch metadata from information schema"""
-        db_type = safe_get(connection.db_details, 'data_source_type', '').upper()
-        
-        # Build WHERE clause conditions
-        where_conditions = []
-        
-        # Handle table_schema - it can be null/empty, use default 'dbo' for SQL Server
+        """Build query to fetch metadata from information schema"""
+        # Handle table_schema - can be null/empty, default to 'dbo' for SQL Server
         table_schemas = connection.table_schema or []
         if table_schemas:
-            # Escape schema names properly
             schemas = "','".join(s.replace("'", "''") for s in table_schemas)
-            if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
-                where_conditions.append(f"c.TABLE_SCHEMA IN ('{schemas}')")
-            else:
-                where_conditions.append(f"c.table_schema IN ('{schemas}')")
-        elif 'SQLSERVER' in db_type or 'MSSQL' in db_type:
-            # Default to 'dbo' for SQL Server if no schema specified
-            where_conditions.append("c.TABLE_SCHEMA = 'dbo'")
         else:
-            # For PostgreSQL/MariaDB, exclude system schemas
-            where_conditions.append("c.table_schema NOT IN ('information_schema', 'pg_catalog', 'mysql', 'performance_schema', 'sys')")
+            schemas = "dbo"  # Default schema for SQL Server
         
-        # Handle include_list - filter to specific tables if provided
+        # Handle include_list for table filtering
         include_list = connection.include_list or []
+        table_filter = ""
         if include_list:
             tables = "','".join(t.replace("'", "''") for t in include_list)
-            if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
-                where_conditions.append(f"c.TABLE_NAME IN ('{tables}')")
-            else:
-                where_conditions.append(f"c.table_name IN ('{tables}')")
+            table_filter = f" AND c.TABLE_NAME IN ('{tables}')"
         
-        # Combine conditions
-        where_clause = " AND ".join(where_conditions) if where_conditions else "1=1"
+        db_type = safe_get(connection.db_details, 'data_source_type', '')
         
-        if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
+        if db_type == DataSourceType.SQLSERVER.value:
+            # SQL Server query - uses LIKE 'PK_%' for primary key detection (original logic)
             # Note: ORDER BY removed - not allowed in subqueries in SQL Server
-            # Ordering will be done in Spark after data is loaded
             return f"""
                 SELECT 
-                    CONCAT(c.TABLE_SCHEMA, '.', c.TABLE_NAME) AS full_table_name,
-                    c.TABLE_NAME AS table_name,
-                    c.COLUMN_NAME AS column_name,
-                    c.DATA_TYPE AS data_type,
-                    c.IS_NULLABLE AS is_nullable,
-                    c.ORDINAL_POSITION AS ordinal_position,
-                    CASE WHEN pk.COLUMN_NAME IS NOT NULL THEN 'true' ELSE 'false' END AS is_primary_key
+                    CONCAT(c.TABLE_SCHEMA, '.', c.TABLE_NAME) as full_table_name,
+                    c.TABLE_NAME as table_name,
+                    c.COLUMN_NAME as column_name,
+                    c.DATA_TYPE as data_type,
+                    c.IS_NULLABLE as is_nullable,
+                    c.ORDINAL_POSITION as ordinal_position,
+                    CASE WHEN kcu.COLUMN_NAME IS NOT NULL THEN 'true' ELSE 'false' END as is_primary_key
                 FROM INFORMATION_SCHEMA.COLUMNS c
-                LEFT JOIN (
-                    SELECT ku.TABLE_SCHEMA, ku.TABLE_NAME, ku.COLUMN_NAME
-                    FROM INFORMATION_SCHEMA.TABLE_CONSTRAINTS tc
-                    INNER JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE ku
-                        ON tc.CONSTRAINT_NAME = ku.CONSTRAINT_NAME
-                        AND tc.TABLE_SCHEMA = ku.TABLE_SCHEMA
-                    WHERE tc.CONSTRAINT_TYPE = 'PRIMARY KEY'
-                ) pk ON c.TABLE_SCHEMA = pk.TABLE_SCHEMA 
-                    AND c.TABLE_NAME = pk.TABLE_NAME 
-                    AND c.COLUMN_NAME = pk.COLUMN_NAME
-                WHERE {where_clause}
+                LEFT JOIN INFORMATION_SCHEMA.KEY_COLUMN_USAGE kcu
+                    ON c.TABLE_SCHEMA = kcu.TABLE_SCHEMA 
+                    AND c.TABLE_NAME = kcu.TABLE_NAME 
+                    AND c.COLUMN_NAME = kcu.COLUMN_NAME
+                    AND kcu.CONSTRAINT_NAME LIKE 'PK_%'
+                WHERE c.TABLE_SCHEMA IN ('{schemas}'){table_filter}
             """
         else:
-            # PostgreSQL/MariaDB query with primary key detection
-            # Note: ORDER BY removed for consistency, ordering done in Spark
+            # PostgreSQL/MariaDB query
             return f"""
                 SELECT 
-                    CONCAT(c.table_schema, '.', c.table_name) AS full_table_name,
+                    CONCAT(c.table_schema, '.', c.table_name) as full_table_name,
                     c.table_name,
                     c.column_name,
                     c.data_type,
                     c.is_nullable,
                     c.ordinal_position,
-                    CASE WHEN pk.column_name IS NOT NULL THEN 'true' ELSE 'false' END AS is_primary_key
+                    'false' as is_primary_key
                 FROM information_schema.columns c
-                LEFT JOIN (
-                    SELECT kcu.table_schema, kcu.table_name, kcu.column_name
-                    FROM information_schema.table_constraints tc
-                    JOIN information_schema.key_column_usage kcu
-                        ON tc.constraint_name = kcu.constraint_name
-                        AND tc.table_schema = kcu.table_schema
-                    WHERE tc.constraint_type = 'PRIMARY KEY'
-                ) pk ON c.table_schema = pk.table_schema 
-                    AND c.table_name = pk.table_name 
-                    AND c.column_name = pk.column_name
-                WHERE {where_clause}
+                WHERE c.table_schema IN ('{schemas}'){table_filter.lower()}
             """
     
     def _process_sql_metadata(
