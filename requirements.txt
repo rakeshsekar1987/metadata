@@ -1,0 +1,15 @@
+# IDP Metadata Collector Framework - Dependencies
+# 
+# Note: This framework is designed to run on Databricks which includes
+# PySpark and other dependencies. This file lists test dependencies only.
+
+# Testing
+pytest>=7.0.0
+
+# Type checking (optional)
+mypy>=1.0.0
+
+# The following are provided by Databricks runtime:
+# - pyspark
+# - dbutils
+# - delta-spark
