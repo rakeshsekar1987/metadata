@@ -9,7 +9,7 @@ IDP Metadata Collector Framework - Optimized Version
 Production-ready, highly optimized implementation for collecting metadata from diverse data sources.
 
 Key Optimizations:
-- Frozen dataclasses for immutable configs (~100 lines saved)
+- Frozen dataclasses for immutable configs
 - Batched DataFrame operations (reduced Catalyst overhead)
 - Registry-based factory pattern (O(1) collector lookup)
 - Single-pass DataFrame enrichment
@@ -29,11 +29,11 @@ import sys
 import time
 from abc import ABC, abstractmethod
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, fields
 from datetime import datetime
 from enum import Enum
 from functools import reduce
-from typing import Any, Callable, Dict, List, Optional, Tuple, TypeVar
+from typing import Any, Callable, Dict, List, Optional, Tuple
 from uuid import uuid4
 
 import pyspark.sql.functions as F
@@ -64,9 +64,9 @@ class DataSourceType(Enum):
     REST_API = "REST_API"
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class CollectorConfig:
-    """Immutable configuration using frozen dataclass (replaces ~150 lines of manual code)"""
+    """Immutable configuration using frozen dataclass"""
     BATCH_SIZE: int = 25
     MAX_RETRIES: int = 3
     MAX_WORKERS: int = 5
@@ -77,21 +77,30 @@ class CollectorConfig:
     JDBC_FETCH_SIZE: int = 10000
     JDBC_BATCH_SIZE: int = 1000
     JDBC_NUM_PARTITIONS: int = 10
-    CACHE_STORAGE_LEVEL: StorageLevel = field(default_factory=lambda: StorageLevel.MEMORY_AND_DISK)
+    CACHE_STORAGE_LEVEL: StorageLevel = field(default=StorageLevel.MEMORY_AND_DISK)
     RETRY_BASE_DELAY: float = 1.0
     RETRY_MAX_DELAY: float = 60.0
     CDC_SAMPLE_SIZE: int = 100
 
     def with_row_count(self, enabled: bool) -> CollectorConfig:
         """Create new config with modified row count setting"""
-        return CollectorConfig(**{**self.__dict__, 'COMPUTE_ROW_COUNT': enabled})
+        # Use fields() to get all field values since slots removes __dict__
+        kwargs = {f.name: getattr(self, f.name) for f in fields(self)}
+        kwargs['COMPUTE_ROW_COUNT'] = enabled
+        return CollectorConfig(**kwargs)
+
+    def with_updates(self, **updates) -> CollectorConfig:
+        """Create new config with multiple updates"""
+        kwargs = {f.name: getattr(self, f.name) for f in fields(self)}
+        kwargs.update(updates)
+        return CollectorConfig(**kwargs)
 
 
 # ============================================================================
-# DATA MODELS - Using slots for memory efficiency
+# DATA MODELS
 # ============================================================================
 
-@dataclass(slots=True)
+@dataclass
 class ConnectionDetails:
     """Base connection details"""
     source_id: str
@@ -106,7 +115,7 @@ class ConnectionDetails:
             raise ValueError("source_id and catalog_name are required")
 
 
-@dataclass(slots=True)
+@dataclass
 class SQLConnectionDetails(ConnectionDetails):
     """SQL-specific connection details"""
     db_host: str = ""
@@ -121,7 +130,7 @@ class SQLConnectionDetails(ConnectionDetails):
     is_ct_enabled: bool = False
 
 
-@dataclass(slots=True)
+@dataclass
 class StorageConnectionDetails(ConnectionDetails):
     """Storage-specific connection details"""
     storage_name: str = ""
@@ -134,7 +143,7 @@ class StorageConnectionDetails(ConnectionDetails):
     set_spark_config: bool = True
 
 
-@dataclass(slots=True)
+@dataclass
 class RESTAPIConnectionDetails(ConnectionDetails):
     """REST API connection details"""
     base_url: str = ""
@@ -145,7 +154,7 @@ class RESTAPIConnectionDetails(ConnectionDetails):
     timeout: int = 30
 
 
-@dataclass(slots=True)
+@dataclass
 class CollectionResult:
     """Result of a metadata collection operation"""
     source_id: str
@@ -221,10 +230,17 @@ class StructuredLogger:
         text = f"{msg} | {' | '.join(f'{k}={v}' for k, v in kw.items())}" if kw else msg
         return self._SENSITIVE_PATTERN.sub('[REDACTED]', text)
 
-    def info(self, msg: str, **kw): self.logger.info(self._fmt(msg, kw))
-    def warning(self, msg: str, **kw): self.logger.warning(self._fmt(msg, kw))
-    def error(self, msg: str, **kw): self.logger.error(self._fmt(msg, kw))
-    def debug(self, msg: str, **kw): self.logger.debug(self._fmt(msg, kw))
+    def info(self, msg: str, **kw) -> None:
+        self.logger.info(self._fmt(msg, kw))
+
+    def warning(self, msg: str, **kw) -> None:
+        self.logger.warning(self._fmt(msg, kw))
+
+    def error(self, msg: str, **kw) -> None:
+        self.logger.error(self._fmt(msg, kw))
+
+    def debug(self, msg: str, **kw) -> None:
+        self.logger.debug(self._fmt(msg, kw))
 
 
 # ============================================================================
@@ -239,9 +255,14 @@ def to_snake_case_col(col: F.Column) -> F.Column:
     ))
 
 
-def is_df_empty(df: DataFrame) -> bool:
+def is_df_empty(df: Optional[DataFrame]) -> bool:
     """Efficiently check if DataFrame is empty (avoids full scan)"""
-    return _len(df.limit(1).collect()) == 0
+    if df is None:
+        return True
+    try:
+        return _len(df.limit(1).collect()) == 0
+    except Exception:
+        return True
 
 
 def safe_get(d: Optional[Dict], key: str, default: Any = None) -> Any:
@@ -259,7 +280,8 @@ def get_data_source_type(db_details: Dict[str, Any]) -> str:
     keys = ('data_source_type', 'dataSourceType', 'source_type', 'sourceType',
             'type', 'connection_type', 'db_type', 'database_type')
     for key in keys:
-        if value := db_details.get(key):
+        value = db_details.get(key)
+        if value:
             return str(value).upper()
     return ''
 
@@ -267,14 +289,26 @@ def get_data_source_type(db_details: Dict[str, Any]) -> str:
 def get_row_value(row, key: str, default: Any = None) -> Any:
     """Safely get value from Spark Row"""
     try:
-        return row[key] if row[key] is not None else default
-    except (KeyError, ValueError):
+        val = row[key]
+        return val if val is not None else default
+    except (KeyError, ValueError, IndexError):
         return default
+
+
+def escape_sql_string(s: str) -> str:
+    """Escape single quotes in SQL strings"""
+    return s.replace("'", "''") if s else ""
 
 
 # ============================================================================
 # SCHEMA DEFINITIONS - Single source of truth
 # ============================================================================
+
+COLUMN_DETAIL_SCHEMA = StructType([
+    StructField("name", StringType(), True),
+    StructField("data_type", StringType(), True),
+    StructField("nullable", StringType(), True)
+])
 
 METADATA_SCHEMA = StructType([
     StructField("full_table_name", StringType(), False),
@@ -282,11 +316,11 @@ METADATA_SCHEMA = StructType([
     StructField("id_columns", ArrayType(StringType()), True),
     StructField("partition_cols", ArrayType(StringType()), True),
     StructField("ct_enabled", IntegerType(), True),
-    StructField("source_id", StringType(), False),
-    StructField("catalog_name", StringType(), False),
+    StructField("source_id", StringType(), True),
+    StructField("catalog_name", StringType(), True),
     StructField("entity_name", StringType(), True),
     StructField("db_name", StringType(), True),
-    StructField("id", StringType(), False),
+    StructField("id", StringType(), True),
     StructField("include_list", ArrayType(StringType()), True),
     StructField("exclude_list", ArrayType(StringType()), True),
     StructField("is_included", IntegerType(), True),
@@ -303,11 +337,7 @@ METADATA_SCHEMA = StructType([
     StructField("column_count", IntegerType(), True),
     StructField("source_schema", ArrayType(StringType()), True),
     StructField("idp_schema", ArrayType(StringType()), True),
-    StructField("column_details", ArrayType(StructType([
-        StructField("name", StringType(), True),
-        StructField("data_type", StringType(), True),
-        StructField("nullable", StringType(), True)
-    ])), True),
+    StructField("column_details", ArrayType(COLUMN_DETAIL_SCHEMA), True),
     StructField("file_size_bytes", LongType(), True),
     StructField("file_last_modified", TimestampType(), True),
     StructField("sample_file_paths", ArrayType(StringType()), True),
@@ -325,6 +355,29 @@ FILE_METADATA_SCHEMA = StructType([
     StructField("column_count", IntegerType(), True),
     StructField("file_size_bytes", LongType(), True),
     StructField("file_last_modified", TimestampType(), True)
+])
+
+API_METADATA_SCHEMA = StructType([
+    StructField("full_table_name", StringType(), False),
+    StructField("table_name", StringType(), False),
+    StructField("id_columns", ArrayType(StringType()), True),
+    StructField("partition_cols", ArrayType(StringType()), True),
+    StructField("ct_enabled", IntegerType(), True),
+    StructField("source_schema", ArrayType(StringType()), True),
+    StructField("column_count", IntegerType(), True),
+    StructField("table_row_count", LongType(), True),
+    StructField("table_size", LongType(), True),
+    StructField("api_endpoint", StringType(), True),
+    StructField("response_format", StringType(), True)
+])
+
+SUMMARY_SCHEMA = StructType([
+    StructField("source_id", StringType(), False),
+    StructField("status", StringType(), False),
+    StructField("error_message", StringType(), True),
+    StructField("row_count", IntegerType(), True),
+    StructField("duration_seconds", DoubleType(), True),
+    StructField("retry_count", IntegerType(), True)
 ])
 
 
@@ -352,7 +405,7 @@ class MetadataCollector(ABC):
 
     def enrich_metadata(self, df: DataFrame, connection: ConnectionDetails) -> DataFrame:
         """Common metadata enrichment using native Spark functions"""
-        if df is None or is_df_empty(df):
+        if is_df_empty(df):
             return df
 
         cdc_hash = self._generate_cdc_hash(df)
@@ -409,10 +462,11 @@ class SQLMetadataCollector(MetadataCollector):
         )
         jdbc_url = self._build_jdbc_url(conn)
         jdbc_props = self._get_jdbc_props(conn, password)
+        query = self._build_metadata_query(conn)
 
         df = (self.spark.read.format("jdbc")
               .option("url", jdbc_url)
-              .option("query", self._build_metadata_query(conn))
+              .option("query", query)
               .option("fetchsize", str(self.config.JDBC_FETCH_SIZE))
               .options(**jdbc_props)
               .load())
@@ -426,26 +480,38 @@ class SQLMetadataCollector(MetadataCollector):
             df.unpersist()
 
     def _build_jdbc_url(self, conn: SQLConnectionDetails) -> str:
-        db_type = safe_get(conn.db_details, 'data_source_type', '')
-        port = conn.db_port or self.PORTS.get(DataSourceType(db_type), "1433")
+        db_type = safe_get(conn.db_details, 'data_source_type', '').upper()
+        port = conn.db_port or self._get_default_port(db_type)
 
-        if 'SQLSERVER' in db_type.upper():
+        if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
             return f"jdbc:sqlserver://{conn.db_host}:{port};database={conn.db_name};encrypt=true;trustServerCertificate=true"
-        elif 'POSTGRESQL' in db_type.upper():
+        elif 'POSTGRESQL' in db_type:
             return f"jdbc:postgresql://{conn.db_host}:{port}/{conn.db_name}"
-        elif 'MARIADB' in db_type.upper():
+        elif 'MARIADB' in db_type:
             return f"jdbc:mariadb://{conn.db_host}:{port}/{conn.db_name}"
         raise ValueError(f"Unsupported database type: {db_type}")
 
+    def _get_default_port(self, db_type: str) -> str:
+        if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
+            return "1433"
+        elif 'POSTGRESQL' in db_type:
+            return "5432"
+        elif 'MARIADB' in db_type:
+            return "3306"
+        return "1433"
+
     def _get_jdbc_props(self, conn: SQLConnectionDetails, password: str) -> Dict[str, str]:
-        db_type = safe_get(conn.db_details, 'data_source_type', '')
-        try:
-            driver = self.DRIVERS[DataSourceType(db_type)]
-        except (KeyError, ValueError):
-            driver = self.DRIVERS[DataSourceType.SQLSERVER]
+        db_type = safe_get(conn.db_details, 'data_source_type', '').upper()
+
+        # Determine driver
+        driver = self.DRIVERS[DataSourceType.SQLSERVER]  # default
+        for ds_type, drv in self.DRIVERS.items():
+            if ds_type.value in db_type:
+                driver = drv
+                break
 
         props = {"user": conn.user_name, "password": password, "driver": driver}
-        if 'SQLSERVER' in db_type.upper():
+        if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
             props.update({"connectionTimeout": "30", "loginTimeout": "30"})
         return props
 
@@ -457,7 +523,7 @@ class SQLMetadataCollector(MetadataCollector):
 
         # Schema filter
         if conn.table_schema:
-            schemas = "','".join(s.replace("'", "''") for s in conn.table_schema)
+            schemas = "','".join(escape_sql_string(s) for s in conn.table_schema)
             col = "c.TABLE_SCHEMA" if is_mssql else "c.table_schema"
             conditions.append(f"{col} IN ('{schemas}')")
         elif is_mssql:
@@ -467,7 +533,7 @@ class SQLMetadataCollector(MetadataCollector):
 
         # Include list filter
         if conn.include_list:
-            tables = "','".join(t.replace("'", "''") for t in conn.include_list)
+            tables = "','".join(escape_sql_string(t) for t in conn.include_list)
             col = "c.TABLE_NAME" if is_mssql else "c.table_name"
             conditions.append(f"{col} IN ('{tables}')")
 
@@ -532,23 +598,22 @@ class SQLMetadataCollector(MetadataCollector):
     def _add_row_counts(self, df: DataFrame, conn: SQLConnectionDetails,
                         jdbc_url: str, jdbc_props: Dict[str, str]) -> DataFrame:
         """Add row counts and table sizes if enabled"""
+        null_long = F.lit(None).cast(LongType())
+
         if not self.config.COMPUTE_ROW_COUNT:
-            return df.select("*",
-                             F.lit(None).cast(LongType()).alias("table_row_count"),
-                             F.lit(None).cast(LongType()).alias("table_size"))
+            return df.select("*", null_long.alias("table_row_count"), null_long.alias("table_size"))
 
         self.logger.info("Computing row counts", source_id=conn.source_id)
         tables = [r["full_table_name"] for r in df.select("full_table_name").distinct().collect()]
 
         if not tables:
-            return df.select("*",
-                             F.lit(None).cast(LongType()).alias("table_row_count"),
-                             F.lit(None).cast(LongType()).alias("table_size"))
+            return df.select("*", null_long.alias("table_row_count"), null_long.alias("table_size"))
 
-        # Single query for all table counts
+        # Single query for all table counts (limit to 50 for query size)
+        tables_batch = tables[:50]
         count_query = " UNION ALL ".join(
-            f"SELECT '{t}' AS table_name, COUNT(*) AS row_count FROM {t}"
-            for t in tables[:50]
+            f"SELECT '{escape_sql_string(t)}' AS tbl_name, COUNT(*) AS row_count FROM {t}"
+            for t in tables_batch
         )
 
         try:
@@ -558,32 +623,32 @@ class SQLMetadataCollector(MetadataCollector):
                          .options(**jdbc_props)
                          .load())
 
+            # Broadcast small lookup table
             counts_lookup = F.broadcast(counts_df.select(
-                F.col("table_name").alias("_lt"),
-                F.col("row_count").alias("_lc")
+                F.col("tbl_name").alias("_lt"),
+                F.col("row_count").cast(LongType()).alias("_lc")
             ))
 
             result = (df
                       .join(counts_lookup, F.col("full_table_name") == F.col("_lt"), "left")
-                      .select(df["*"], F.col("_lc").cast(LongType()).alias("table_row_count"))
+                      .withColumn("table_row_count", F.col("_lc"))
                       .drop("_lt", "_lc"))
 
-            return self._add_table_sizes(result, conn, jdbc_url, jdbc_props, tables)
+            return self._add_table_sizes(result, conn, jdbc_url, jdbc_props, tables_batch)
 
         except Exception as e:
             self.logger.warning(f"Failed to get row counts: {e}")
-            return df.select("*",
-                             F.lit(None).cast(LongType()).alias("table_row_count"),
-                             F.lit(None).cast(LongType()).alias("table_size"))
+            return df.select("*", null_long.alias("table_row_count"), null_long.alias("table_size"))
 
     def _add_table_sizes(self, df: DataFrame, conn: SQLConnectionDetails,
                          jdbc_url: str, jdbc_props: Dict[str, str], tables: List[str]) -> DataFrame:
         """Add table sizes in bytes"""
-        db_type = safe_get(conn.db_details, 'data_source_type', '')
+        null_long = F.lit(None).cast(LongType())
+        db_type = safe_get(conn.db_details, 'data_source_type', '').upper()
         size_query = self._build_size_query(db_type, tables, conn.db_name)
 
         if not size_query:
-            return df.withColumn("table_size", F.lit(None).cast(LongType()))
+            return df.withColumn("table_size", null_long)
 
         try:
             sizes_df = (self.spark.read.format("jdbc")
@@ -594,27 +659,35 @@ class SQLMetadataCollector(MetadataCollector):
 
             sizes_lookup = F.broadcast(sizes_df.select(
                 F.col("table_name").alias("_st"),
-                F.col("size_bytes").alias("_sb")
+                F.col("size_bytes").cast(LongType()).alias("_sb")
             ))
 
             return (df
                     .join(sizes_lookup, F.col("full_table_name") == F.col("_st"), "left")
-                    .withColumn("table_size", F.col("_sb").cast(LongType()))
+                    .withColumn("table_size", F.col("_sb"))
                     .drop("_st", "_sb"))
 
         except Exception as e:
             self.logger.warning(f"Failed to get table sizes: {e}")
-            return df.withColumn("table_size", F.lit(None).cast(LongType()))
+            return df.withColumn("table_size", null_long)
 
     def _build_size_query(self, db_type: str, tables: List[str], db_name: str) -> str:
         """Build database-specific size query"""
-        parsed = [(t.split('.')[0], t.split('.')[1]) if '.' in t else ('', t)
-                  for t in tables[:50]]
+        # Parse schema.table format
+        parsed = []
+        for t in tables:
+            parts = t.split('.', 1)
+            if _len(parts) == 2:
+                parsed.append((parts[0], parts[1]))
 
-        if 'SQLSERVER' in db_type.upper():
-            conds = " OR ".join(f"(s.name = '{s}' AND t.name = '{t}')" for s, t in parsed if s)
-            if not conds:
-                return ""
+        if not parsed:
+            return ""
+
+        if 'SQLSERVER' in db_type or 'MSSQL' in db_type:
+            conds = " OR ".join(
+                f"(s.name = '{escape_sql_string(s)}' AND t.name = '{escape_sql_string(tbl)}')"
+                for s, tbl in parsed
+            )
             return f"""
                 SELECT CONCAT(s.name, '.', t.name) AS table_name, SUM(a.total_pages) * 8 * 1024 AS size_bytes
                 FROM sys.tables t
@@ -623,23 +696,25 @@ class SQLMetadataCollector(MetadataCollector):
                 INNER JOIN sys.partitions p ON i.object_id = p.object_id AND i.index_id = p.index_id
                 INNER JOIN sys.allocation_units a ON p.partition_id = a.container_id
                 WHERE ({conds}) GROUP BY s.name, t.name"""
-        elif 'POSTGRESQL' in db_type.upper():
-            conds = " OR ".join(f"(schemaname = '{s}' AND tablename = '{t}')" for s, t in parsed if s)
-            if not conds:
-                return ""
+
+        elif 'POSTGRESQL' in db_type:
+            conds = " OR ".join(
+                f"(schemaname = '{escape_sql_string(s)}' AND tablename = '{escape_sql_string(tbl)}')"
+                for s, tbl in parsed
+            )
             return f"""
                 SELECT schemaname || '.' || tablename AS table_name,
                        pg_total_relation_size(schemaname || '.' || tablename) AS size_bytes
                 FROM pg_tables WHERE ({conds})"""
-        elif 'MARIADB' in db_type.upper():
-            tnames = ", ".join(f"'{t}'" for _, t in parsed)
-            if not tnames:
-                return ""
+
+        elif 'MARIADB' in db_type:
+            tnames = ", ".join(f"'{escape_sql_string(tbl)}'" for _, tbl in parsed)
             return f"""
                 SELECT CONCAT(table_schema, '.', table_name) AS table_name,
                        (data_length + index_length) AS size_bytes
                 FROM information_schema.tables
-                WHERE table_schema = '{db_name}' AND table_name IN ({tnames})"""
+                WHERE table_schema = '{escape_sql_string(db_name)}' AND table_name IN ({tnames})"""
+
         return ""
 
 
@@ -678,12 +753,13 @@ class StorageMetadataCollector(MetadataCollector):
 
         df = self.spark.createDataFrame(metadata_rows, FILE_METADATA_SCHEMA)
         sample_paths = [f['path'] for f in files[:self.config.SAMPLE_FILE_LIMIT]]
+        null_long = F.lit(None).cast(LongType())
 
         df = df.select(
             "*",
             F.lit(sample_paths).cast(ArrayType(StringType())).alias("sample_file_paths"),
             F.col("file_size_bytes").alias("table_size"),
-            F.lit(None).cast(LongType()).alias("table_row_count")
+            null_long.alias("table_row_count")
         )
 
         if self.config.COMPUTE_ROW_COUNT and conn.file_extension:
@@ -691,7 +767,7 @@ class StorageMetadataCollector(MetadataCollector):
 
         return self.enrich_metadata(df, conn)
 
-    def _configure_storage(self, conn: StorageConnectionDetails):
+    def _configure_storage(self, conn: StorageConnectionDetails) -> None:
         try:
             key = self.secret_provider.get_secret(
                 conn.storage_access_key, scope=safe_get(conn.db_details, 'secret_scope')
@@ -718,6 +794,7 @@ class StorageMetadataCollector(MetadataCollector):
         try:
             files = []
             ext_suffix = f".{ext.lstrip('.')}" if ext else None
+            limit = self.config.SAMPLE_FILE_LIMIT * 2
 
             for f in self.dbutils.fs.ls(path):
                 if f.name.endswith('/'):
@@ -739,7 +816,10 @@ class StorageMetadataCollector(MetadataCollector):
                     'modificationTime': mod_time
                 })
 
-            return files[:self.config.SAMPLE_FILE_LIMIT * 2]
+                if _len(files) >= limit:
+                    break
+
+            return files
         except Exception as e:
             self.logger.error(f"Failed to list files: {e}", path=path)
             return []
@@ -748,6 +828,7 @@ class StorageMetadataCollector(MetadataCollector):
         sample_files = files[:self.config.SAMPLE_FILE_LIMIT]
         schema_cols = self._infer_schema(sample_files, conn)
 
+        # Match ID columns case-insensitively
         id_cols_lower = {c.lower(): c for c in schema_cols}
         matched_ids = [id_cols_lower[c.lower()] for c in (conn.id_columns or []) if c.lower() in id_cols_lower]
 
@@ -775,7 +856,8 @@ class StorageMetadataCollector(MetadataCollector):
                   .options(**(conn.file_options or {}))
                   .load(files[0]['path']))
             return df.columns
-        except Exception:
+        except Exception as e:
+            self.logger.warning(f"Failed to infer schema: {e}")
             return []
 
     def _add_file_row_counts(self, df: DataFrame, conn: StorageConnectionDetails) -> DataFrame:
@@ -783,12 +865,12 @@ class StorageMetadataCollector(MetadataCollector):
         paths = [r["full_table_name"] for r in df.select("full_table_name").collect()]
 
         counts = {}
+        fmt = conn.file_extension.lstrip('.')
+        opts = conn.file_options or {}
+
         for p in paths:
             try:
-                file_df = (self.spark.read
-                           .format(conn.file_extension.lstrip('.'))
-                           .options(**(conn.file_options or {}))
-                           .load(p))
+                file_df = self.spark.read.format(fmt).options(**opts).load(p)
                 counts[p] = file_df.count()
             except Exception:
                 counts[p] = None
@@ -828,6 +910,8 @@ class CassandraMetadataCollector(MetadataCollector):
               .filter(F.col("keyspace_name") == keyspace))
 
         df = df.persist(self.config.CACHE_STORAGE_LEVEL)
+        null_long = F.lit(None).cast(LongType())
+
         try:
             processed = (
                 df.groupBy("table_name")
@@ -843,8 +927,8 @@ class CassandraMetadataCollector(MetadataCollector):
                     F.concat(F.lit(f"{keyspace}."), F.col("table_name")).alias("full_table_name"),
                     "table_name", "id_columns", "source_schema", "column_count",
                     F.array().cast(ArrayType(StringType())).alias("partition_cols"),
-                    F.lit(None).cast(LongType()).alias("table_row_count"),
-                    F.lit(None).cast(LongType()).alias("table_size"),
+                    null_long.alias("table_row_count"),
+                    null_long.alias("table_size"),
                     F.lit(0).alias("ct_enabled"),
                     F.lit(keyspace).alias("db_name")
                 )
@@ -913,21 +997,7 @@ class RESTAPIMetadataCollector(MetadataCollector):
         if not rows:
             return None
 
-        schema = StructType([
-            StructField("full_table_name", StringType(), False),
-            StructField("table_name", StringType(), False),
-            StructField("id_columns", ArrayType(StringType()), True),
-            StructField("partition_cols", ArrayType(StringType()), True),
-            StructField("ct_enabled", IntegerType(), True),
-            StructField("source_schema", ArrayType(StringType()), True),
-            StructField("column_count", IntegerType(), True),
-            StructField("table_row_count", LongType(), True),
-            StructField("table_size", LongType(), True),
-            StructField("api_endpoint", StringType(), True),
-            StructField("response_format", StringType(), True)
-        ])
-
-        return self.enrich_metadata(self.spark.createDataFrame(rows, schema), conn)
+        return self.enrich_metadata(self.spark.createDataFrame(rows, API_METADATA_SCHEMA), conn)
 
 
 # ============================================================================
@@ -948,29 +1018,29 @@ class MetadataCollectorFactory:
         self.http_client = http_client
         self._cache: Dict[DataSourceType, MetadataCollector] = {}
 
-        # Registry mapping - replaces if/elif chain
-        self._registry: Dict[DataSourceType, Callable[[], MetadataCollector]] = {
-            DataSourceType.SQLSERVER: self._create_sql,
-            DataSourceType.POSTGRESQL: self._create_sql,
-            DataSourceType.MARIADB: self._create_sql,
-            DataSourceType.ABFSS_STORAGE: self._create_storage,
-            DataSourceType.WABS_STORAGE: self._create_storage,
-            DataSourceType.WASBS_SAS_STORAGE: self._create_storage,
-            DataSourceType.CASSANDRA: self._create_cassandra,
-            DataSourceType.REST_API: self._create_rest,
-        }
-
-    def _create_sql(self): return SQLMetadataCollector(self.spark, self.secret_provider, self.logger, self.config)
-    def _create_storage(self): return StorageMetadataCollector(self.spark, self.secret_provider, self.logger, self.config, self.dbutils)
-    def _create_cassandra(self): return CassandraMetadataCollector(self.spark, self.secret_provider, self.logger, self.config)
-    def _create_rest(self): return RESTAPIMetadataCollector(self.spark, self.secret_provider, self.logger, self.config, self.http_client)
-
     def get_collector(self, ds_type: DataSourceType) -> MetadataCollector:
         if ds_type not in self._cache:
-            if ds_type not in self._registry:
-                raise ValueError(f"No collector for {ds_type}")
-            self._cache[ds_type] = self._registry[ds_type]()
+            self._cache[ds_type] = self._create_collector(ds_type)
         return self._cache[ds_type]
+
+    def _create_collector(self, ds_type: DataSourceType) -> MetadataCollector:
+        # SQL databases
+        if ds_type in (DataSourceType.SQLSERVER, DataSourceType.POSTGRESQL, DataSourceType.MARIADB):
+            return SQLMetadataCollector(self.spark, self.secret_provider, self.logger, self.config)
+
+        # Storage systems
+        if ds_type in (DataSourceType.ABFSS_STORAGE, DataSourceType.WABS_STORAGE, DataSourceType.WASBS_SAS_STORAGE):
+            return StorageMetadataCollector(self.spark, self.secret_provider, self.logger, self.config, self.dbutils)
+
+        # Cassandra
+        if ds_type == DataSourceType.CASSANDRA:
+            return CassandraMetadataCollector(self.spark, self.secret_provider, self.logger, self.config)
+
+        # REST API
+        if ds_type == DataSourceType.REST_API:
+            return RESTAPIMetadataCollector(self.spark, self.secret_provider, self.logger, self.config, self.http_client)
+
+        raise ValueError(f"No collector for {ds_type}")
 
 
 # ============================================================================
@@ -979,18 +1049,19 @@ class MetadataCollectorFactory:
 
 def enrich_metadata_df(df: DataFrame, db_details: Dict[str, Any]) -> DataFrame:
     """Single-pass metadata enrichment using batched column operations"""
-    if df is None or is_df_empty(df):
+    if is_df_empty(df):
         return df
 
-    include_list = safe_get(db_details, 'include_list', [])
-    exclude_list = safe_get(db_details, 'exclude_list', [])
-    append_only = safe_get(db_details, 'append_only_list', [])
+    include_list = safe_get(db_details, 'include_list', []) or []
+    exclude_list = safe_get(db_details, 'exclude_list', []) or []
+    append_only = safe_get(db_details, 'append_only_list', []) or []
 
+    # Create array literals
     include_arr = F.array(*[F.lit(x) for x in include_list]) if include_list else F.array()
     exclude_arr = F.array(*[F.lit(x) for x in exclude_list]) if exclude_list else F.array()
     append_arr = F.array(*[F.lit(x) for x in append_only]) if append_only else F.array()
 
-    # Compute is_included
+    # Compute is_included expression
     is_included = F.when(
         (F.size(include_arr) == 0) & (F.size(exclude_arr) == 0), F.lit(1)
     ).when(
@@ -999,17 +1070,28 @@ def enrich_metadata_df(df: DataFrame, db_details: Dict[str, Any]) -> DataFrame:
         (F.size(include_arr) == 0) & ~F.array_contains(exclude_arr, F.col("table_name")), F.lit(1)
     ).otherwise(F.lit(0))
 
-    is_append_only = F.when(F.array_contains(append_arr, F.col("table_name")), F.lit(1)).otherwise(F.lit(0)) if append_only else F.lit(0)
+    # Compute is_append_only expression
+    is_append_only = (
+        F.when(F.array_contains(append_arr, F.col("table_name")), F.lit(1)).otherwise(F.lit(0))
+        if append_only else F.lit(0)
+    )
+
+    # Transform arrays to snake_case
+    id_cols_snake = F.when(
+        F.col("id_columns").isNotNull(),
+        F.transform(F.col("id_columns"), lambda x: to_snake_case_col(x))
+    ).otherwise(F.array().cast(ArrayType(StringType())))
+
+    schema_snake = F.when(
+        F.col("source_schema").isNotNull(),
+        F.transform(F.col("source_schema"), lambda x: to_snake_case_col(x))
+    ).otherwise(F.array().cast(ArrayType(StringType())))
 
     return df.select(
         "*",
         to_snake_case_col(F.col("table_name")).alias("idp_db_name"),
-        F.when(F.col("id_columns").isNotNull(),
-               F.transform(F.col("id_columns"), lambda x: to_snake_case_col(x))
-        ).otherwise(F.array().cast(ArrayType(StringType()))).alias("idp_id_columns"),
-        F.when(F.col("source_schema").isNotNull(),
-               F.transform(F.col("source_schema"), lambda x: to_snake_case_col(x))
-        ).otherwise(F.array().cast(ArrayType(StringType()))).alias("idp_schema"),
+        id_cols_snake.alias("idp_id_columns"),
+        schema_snake.alias("idp_schema"),
         include_arr.cast(ArrayType(StringType())).alias("include_list"),
         exclude_arr.cast(ArrayType(StringType())).alias("exclude_list"),
         is_included.alias("is_included"),
@@ -1034,28 +1116,32 @@ class DuplicateHandler:
         if is_df_empty(df):
             return df
 
-        # Count occurrences efficiently
         from pyspark.sql.window import Window
+
+        # Add count per id
         w = Window.partitionBy("id")
+        df_with_count = df.withColumn("_dup_cnt", F.count("*").over(w))
 
-        df_with_count = df.withColumn("_cnt", F.count("*").over(w))
+        # Check if any duplicates exist (fast check)
+        has_dups = df_with_count.filter(F.col("_dup_cnt") > 1).limit(1).count() > 0
 
-        # Fast path: no duplicates
-        if df_with_count.filter(F.col("_cnt") > 1).limit(1).count() == 0:
-            return df_with_count.drop("_cnt")
+        if not has_dups:
+            return df_with_count.drop("_dup_cnt")
 
         self.logger.info("Resolving duplicate IDs")
 
-        # Resolve duplicates by adding schema prefix
+        # Extract schema prefix from full_table_name (second-to-last part when split by .)
+        schema_prefix = F.element_at(F.split(F.col("full_table_name"), "\\."), -2)
+
+        # Resolve duplicates by adding schema prefix to table_name
         resolved = (
             df_with_count
-            .withColumn("_schema", F.element_at(F.split(F.col("full_table_name"), "\\."), -2))
             .withColumn("table_name",
-                        F.when((F.col("_cnt") > 1) & F.col("_schema").isNotNull(),
-                               F.concat_ws("_", F.col("_schema"), F.col("table_name")))
+                        F.when((F.col("_dup_cnt") > 1) & schema_prefix.isNotNull(),
+                               F.concat_ws("_", schema_prefix, F.col("table_name")))
                         .otherwise(F.col("table_name")))
             .withColumn("id", F.concat_ws("_", F.col("source_id"), F.col("table_name")))
-            .drop("_cnt", "_schema")
+            .drop("_dup_cnt")
             .dropDuplicates(["id"])
         )
         return resolved
@@ -1070,56 +1156,75 @@ class MetadataCollectionOrchestrator:
 
     def __init__(self, spark: SparkSession, secret_provider: SecretProvider,
                  df_reader: DataFrameReader, df_writer: DataFrameWriter,
-                 dbutils: Any, http_client: HTTPClient, config: CollectorConfig = CollectorConfig()):
+                 dbutils: Any, http_client: HTTPClient,
+                 config: CollectorConfig = None):
         self.spark = spark
         self.secret_provider = secret_provider
         self.df_reader = df_reader
         self.df_writer = df_writer
-        self.config = config
-        self.logger = StructuredLogger(__name__, config.LOG_LEVEL)
+        self.config = config or CollectorConfig()
+        self.logger = StructuredLogger(__name__, self.config.LOG_LEVEL)
         self.factory = MetadataCollectorFactory(
-            spark, secret_provider, self.logger, config, dbutils, http_client
+            spark, secret_provider, self.logger, self.config, dbutils, http_client
         )
         self.dup_handler = DuplicateHandler(self.logger)
         self.results: List[CollectionResult] = []
 
-    def collect_all(self, connections: List[ConnectionDetails], full_load: bool = False) -> Tuple[DataFrame, DataFrame]:
+    def collect_all(self, connections: List[ConnectionDetails],
+                    full_load: bool = False) -> Tuple[DataFrame, DataFrame]:
         """Collect metadata from all connections"""
-        self.logger.info("Starting collection", count=_len(connections), mode="FULL" if full_load else "INCREMENTAL")
+        self.logger.info("Starting collection",
+                         count=_len(connections),
+                         mode="FULL" if full_load else "INCREMENTAL")
         self.results = []
         all_dfs: List[DataFrame] = []
 
         # Process in batches
+        total_batches = (_len(connections) + self.config.BATCH_SIZE - 1) // self.config.BATCH_SIZE
+
         for i in range(0, _len(connections), self.config.BATCH_SIZE):
             batch = connections[i:i + self.config.BATCH_SIZE]
-            self.logger.info(f"Processing batch {i // self.config.BATCH_SIZE + 1}")
+            batch_num = i // self.config.BATCH_SIZE + 1
+            self.logger.info(f"Processing batch {batch_num}/{total_batches}")
 
             for result in self._process_batch(batch):
                 self.results.append(result)
                 if result.status == "Success" and result.metadata_df is not None:
                     all_dfs.append(result.metadata_df)
 
+                icon = "✅" if result.status == "Success" else "❌"
                 self.logger.info(
-                    f"{'✅' if result.status == 'Success' else '❌'} {result.source_id}",
-                    status=result.status, rows=result.row_count, duration=f"{result.duration_seconds:.2f}s"
+                    f"{icon} {result.source_id}",
+                    status=result.status,
+                    rows=result.row_count,
+                    duration=f"{result.duration_seconds:.2f}s"
                 )
 
-        combined = self._combine_dfs(all_dfs) if all_dfs else self.spark.createDataFrame([], METADATA_SCHEMA)
-        combined = self.dup_handler.resolve(combined)
+        # Combine all DataFrames
+        if all_dfs:
+            combined = self._combine_dfs(all_dfs)
+            combined = self.dup_handler.resolve(combined)
+        else:
+            combined = self.spark.createDataFrame([], METADATA_SCHEMA)
+
         return combined, self._create_summary()
 
     def _process_batch(self, batch: List[ConnectionDetails]) -> List[CollectionResult]:
+        """Process a batch of connections in parallel"""
+        results = []
+
         with ThreadPoolExecutor(max_workers=self.config.MAX_WORKERS) as executor:
             futures = {executor.submit(self._process_one, c): c for c in batch}
-            results = []
+
             for future in as_completed(futures):
+                conn = futures[future]
                 try:
                     results.append(future.result())
                 except Exception as e:
-                    c = futures[future]
-                    self.logger.error(f"Unexpected error", source_id=c.source_id, error=str(e))
-                    results.append(CollectionResult(c.source_id, "Failure", str(e)[:500]))
-            return results
+                    self.logger.error(f"Unexpected error", source_id=conn.source_id, error=str(e))
+                    results.append(CollectionResult(conn.source_id, "Failure", str(e)[:500]))
+
+        return results
 
     def _process_one(self, conn: ConnectionDetails) -> CollectionResult:
         """Process single connection with retries"""
@@ -1128,6 +1233,7 @@ class MetadataCollectionOrchestrator:
 
         for attempt in range(1, self.config.MAX_RETRIES + 1):
             try:
+                # Get data source type
                 ds_type_str = get_data_source_type(conn.db_details or {})
                 if not ds_type_str:
                     raise ValueError("data_source_type not found in db_details")
@@ -1141,56 +1247,76 @@ class MetadataCollectionOrchestrator:
                 if not ds_type:
                     raise ValueError(f"Unknown data_source_type: {ds_type_str}")
 
+                # Get collector and validate
                 collector = self.factory.get_collector(ds_type)
                 is_valid, err = collector.validate_connection(conn)
                 if not is_valid:
                     raise ValueError(f"Invalid connection: {err}")
 
+                # Collect metadata
                 df = collector.collect_metadata(conn)
-                if df is None or is_df_empty(df):
+                if is_df_empty(df):
                     raise ValueError("No metadata collected")
 
+                # Enrich metadata
                 df = enrich_metadata_df(df, conn.db_details or {})
                 df = df.persist(self.config.CACHE_STORAGE_LEVEL)
                 count = df.count()
 
-                return CollectionResult(conn.source_id, "Success", None, df, count,
-                                        time.time() - start, attempt - 1)
+                return CollectionResult(
+                    conn.source_id, "Success", None, df, count,
+                    time.time() - start, attempt - 1
+                )
 
             except Exception as e:
                 last_error = e
-                self.logger.warning(f"Attempt {attempt} failed", source_id=conn.source_id, error=str(e)[:200])
+                self.logger.warning(
+                    f"Attempt {attempt} failed",
+                    source_id=conn.source_id,
+                    error=str(e)[:200]
+                )
                 if attempt < self.config.MAX_RETRIES:
-                    time.sleep(_min(self.config.RETRY_BASE_DELAY * (2 ** (attempt - 1)), self.config.RETRY_MAX_DELAY))
+                    delay = _min(
+                        self.config.RETRY_BASE_DELAY * (2 ** (attempt - 1)),
+                        self.config.RETRY_MAX_DELAY
+                    )
+                    time.sleep(delay)
 
-        return CollectionResult(conn.source_id, "Failure", str(last_error)[:500] if last_error else "Unknown",
-                                None, 0, time.time() - start, self.config.MAX_RETRIES)
+        return CollectionResult(
+            conn.source_id, "Failure",
+            str(last_error)[:500] if last_error else "Unknown error",
+            None, 0, time.time() - start, self.config.MAX_RETRIES
+        )
 
     def _combine_dfs(self, dfs: List[DataFrame]) -> DataFrame:
+        """Combine multiple DataFrames with schema alignment"""
         if _len(dfs) == 1:
             return dfs[0]
-        return reduce(lambda a, b: a.unionByName(b, allowMissingColumns=True), dfs).dropDuplicates(["id"])
+        combined = reduce(
+            lambda a, b: a.unionByName(b, allowMissingColumns=True),
+            dfs
+        )
+        return combined.dropDuplicates(["id"])
 
     def _create_summary(self) -> DataFrame:
-        rows = [(r.source_id, r.status, r.error_message, r.row_count,
-                 _round(r.duration_seconds, 2), r.retry_count) for r in self.results]
-        schema = StructType([
-            StructField("source_id", StringType(), False),
-            StructField("status", StringType(), False),
-            StructField("error_message", StringType(), True),
-            StructField("row_count", IntegerType(), True),
-            StructField("duration_seconds", DoubleType(), True),
-            StructField("retry_count", IntegerType(), True)
-        ])
-        return self.spark.createDataFrame(rows, schema)
+        """Create summary DataFrame from results"""
+        rows = [
+            (r.source_id, r.status, r.error_message, r.row_count,
+             _round(r.duration_seconds, 2), r.retry_count)
+            for r in self.results
+        ]
+        return self.spark.createDataFrame(rows, SUMMARY_SCHEMA)
 
     def write_results(self, df: DataFrame, table: str, full_load: bool = False,
-                      merge_keys: Optional[List[str]] = None):
+                      merge_keys: Optional[List[str]] = None) -> None:
+        """Write metadata results to target table"""
         if is_df_empty(df):
             self.logger.warning("No metadata to write")
             return
 
-        self.logger.info(f"Writing results", rows=df.count(), target=table)
+        row_count = df.count()
+        self.logger.info(f"Writing results", rows=row_count, target=table)
+
         try:
             if full_load:
                 self.df_writer.write_table(df, table, mode="overwrite", overwriteSchema="true")
@@ -1214,7 +1340,8 @@ class DatabricksSecretProvider(SecretProvider):
         self.default_scope = scope
         self._cache: Dict[str, str] = {}
 
-    def get_secret(self, key: str, default: Optional[str] = None, scope: Optional[str] = None) -> str:
+    def get_secret(self, key: str, default: Optional[str] = None,
+                   scope: Optional[str] = None) -> str:
         secret_scope = scope or self.default_scope
         cache_key = f"{secret_scope}:{key}"
 
@@ -1237,25 +1364,32 @@ class DatabricksDataFrameWriter(DataFrameWriter):
     def __init__(self, spark: SparkSession):
         self.spark = spark
 
-    def write_table(self, df: DataFrame, table: str, **kwargs):
+    def write_table(self, df: DataFrame, table: str, **kwargs) -> None:
         mode = kwargs.pop("mode", "overwrite")
         writer = df.write.format("delta").mode(mode)
         for k, v in kwargs.items():
             writer = writer.option(k, v)
         writer.saveAsTable(table)
 
-    def merge_table(self, df: DataFrame, table: str, keys: List[str]):
+    def merge_table(self, df: DataFrame, table: str, keys: List[str]) -> None:
         from delta.tables import DeltaTable
+
         if not self.spark.catalog.tableExists(table):
             self.write_table(df, table)
             return
 
         delta = DeltaTable.forName(self.spark, table)
         cond = " AND ".join(f"t.{k} = s.{k}" for k in keys)
-        delta.alias("t").merge(df.alias("s"), cond).whenMatchedUpdateAll().whenNotMatchedInsertAll().execute()
+        (delta.alias("t")
+         .merge(df.alias("s"), cond)
+         .whenMatchedUpdateAll()
+         .whenNotMatchedInsertAll()
+         .execute())
 
 
 class DatabricksDataFrameReader(DataFrameReader):
+    """Databricks DataFrame reader"""
+
     def __init__(self, spark: SparkSession):
         self.spark = spark
 
@@ -1273,6 +1407,7 @@ class RequestsHTTPClient(HTTPClient):
     """HTTP client with retry strategy"""
 
     def __init__(self):
+        self.session = None
         try:
             import requests
             from requests.adapters import HTTPAdapter
@@ -1284,7 +1419,7 @@ class RequestsHTTPClient(HTTPClient):
             self.session.mount("http://", adapter)
             self.session.mount("https://", adapter)
         except ImportError:
-            self.session = None
+            pass
 
     def get(self, url: str, headers: Dict[str, str], timeout: int) -> Dict:
         if not self.session:
@@ -1301,28 +1436,42 @@ class RequestsHTTPClient(HTTPClient):
 def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
     """Parse connection configurations from DataFrame"""
     connections = []
-    active = config_df.filter(F.col("is_active").cast("boolean")).collect()
+
+    # Filter active sources
+    active = config_df.filter(F.col("is_active").cast("boolean") == True).collect()
 
     for row in active:
         try:
+            # Parse db_details
             db_details = row["db_details"]
             if isinstance(db_details, str):
-                db_details = json.loads(db_details)
-            db_details = db_details if isinstance(db_details, dict) else {}
+                try:
+                    db_details = json.loads(db_details)
+                except json.JSONDecodeError:
+                    db_details = {}
+            elif db_details is None:
+                db_details = {}
+            elif hasattr(db_details, 'asDict'):
+                db_details = db_details.asDict()
+            elif not isinstance(db_details, dict):
+                db_details = {}
 
+            # Get data source type
             ds_type = get_row_value(row, 'data_source_type', '') or get_data_source_type(db_details)
             db_details['data_source_type'] = ds_type
             ds_upper = ds_type.upper()
 
-            base = dict(
-                source_id=row["id"],
-                catalog_name=row["catalog_name"],
-                table_name=get_row_value(row, "table_name"),
-                metadata_enabled=get_row_value(row, "metadata_enabled", True),
-                is_active=row["is_active"],
-                db_details=db_details
-            )
+            # Base connection params
+            base = {
+                "source_id": row["id"],
+                "catalog_name": row["catalog_name"],
+                "table_name": get_row_value(row, "table_name"),
+                "metadata_enabled": get_row_value(row, "metadata_enabled", True),
+                "is_active": row["is_active"],
+                "db_details": db_details
+            }
 
+            # Create appropriate connection type
             if any(x in ds_upper for x in ("STORAGE", "ABFSS", "WABS", "BLOB", "ADLS", "S3", "GCS")):
                 conn = StorageConnectionDetails(
                     **base,
@@ -1360,8 +1509,10 @@ def parse_connections(config_df: DataFrame) -> List[ConnectionDetails]:
                 )
 
             connections.append(conn)
+
         except Exception as e:
-            print(f"Warning: Failed to parse connection {get_row_value(row, 'id', 'unknown')}: {e}")
+            source_id = get_row_value(row, 'id', 'unknown')
+            print(f"Warning: Failed to parse connection {source_id}: {e}")
 
     return connections
 
@@ -1374,26 +1525,31 @@ def main_notebook_execution(dbutils, spark: SparkSession) -> str:
     """Main execution function for Databricks notebook"""
     import os
 
+    # Get environment configuration
     env = os.environ.get("ENV", "qa")
     default_scope = os.environ.get("SECRET_SCOPE", "idp-secrets")
 
+    # Setup widgets
     dbutils.widgets.text("full_load", "False", "Full Load?")
     dbutils.widgets.text("job_run_id", "", "Job Run ID")
     dbutils.widgets.text("compute_row_count", "False", "Compute Row Counts?")
     dbutils.widgets.text("secret_scope", default_scope, "Secret Scope Name")
 
+    # Parse widget values
     full_load = dbutils.widgets.get("full_load").strip().lower() == "true"
     compute_row_count = dbutils.widgets.get("compute_row_count").strip().lower() == "true"
     secret_scope = dbutils.widgets.get("secret_scope").strip() or default_scope
 
     print(f"🔧 Config: env={env}, scope={secret_scope}, full_load={full_load}, row_count={compute_row_count}")
 
+    # Initialize configuration and components
     config = CollectorConfig().with_row_count(compute_row_count)
     secret_provider = DatabricksSecretProvider(dbutils, scope=secret_scope)
     df_reader = DatabricksDataFrameReader(spark)
     df_writer = DatabricksDataFrameWriter(spark)
     http_client = RequestsHTTPClient()
 
+    # Load and parse connections
     config_table = f"{env}_idp.config.metadata_source_connection_details"
     print(f"   Config Table: {config_table}")
     connections = parse_connections(df_reader.read_table(config_table))
@@ -1402,12 +1558,14 @@ def main_notebook_execution(dbutils, spark: SparkSession) -> str:
         print("⚠️ No active connections found")
         return "SUCCESS"
 
+    # Execute collection
     orchestrator = MetadataCollectionOrchestrator(
         spark, secret_provider, df_reader, df_writer, dbutils, http_client, config
     )
 
     metadata_df, summary_df = orchestrator.collect_all(connections, full_load)
 
+    # Display summary
     print("=" * 70)
     print("METADATA COLLECTION SUMMARY")
     print("=" * 70)
@@ -1418,6 +1576,7 @@ def main_notebook_execution(dbutils, spark: SparkSession) -> str:
     print(f"\nTotal: {_len(connections)}, Success: {success}, Failed: {failure}")
     print("=" * 70)
 
+    # Write results
     if not is_df_empty(metadata_df):
         target = f"{env}_idp.config.meta_data_registry"
         orchestrator.write_results(metadata_df, target, full_load)
@@ -1425,7 +1584,13 @@ def main_notebook_execution(dbutils, spark: SparkSession) -> str:
     else:
         print("⚠️ No metadata to write")
 
-    return "SUCCESS" if failure == 0 else ("PARTIAL_SUCCESS" if success > 0 else "FAILURE")
+    # Return status
+    if failure == 0:
+        return "SUCCESS"
+    elif success > 0:
+        return "PARTIAL_SUCCESS"
+    else:
+        return "FAILURE"
 
 
 # COMMAND ----------
