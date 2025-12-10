@@ -57,7 +57,13 @@ def get_secret_value(secret_key: str, default_value: str = "") -> str:
     Get secret value from Databricks secrets.
     
     Fallback implementation if DPCommonFunctions.get_secret_value is not available.
+    Supports multiple secret key formats:
+    - "scope/key" format
+    - Just the key (will try common scopes)
     """
+    if not secret_key:
+        return default_value
+    
     try:
         # Try to use DPCommonFunctions version first
         from DPCommonFunctions import get_secret_value as dp_get_secret_value
@@ -65,17 +71,61 @@ def get_secret_value(secret_key: str, default_value: str = "") -> str:
     except (ImportError, NameError, AttributeError):
         # Fallback: try dbutils directly
         try:
-            if secret_key:
-                # Format: scope/key
-                if "/" in secret_key:
-                    scope, key = secret_key.split("/", 1)
+            # Format: scope/key
+            if "/" in secret_key:
+                scope, key = secret_key.split("/", 1)
+                try:
                     return dbutils.secrets.get(scope=scope, key=key)
-                else:
-                    # Try default scope
-                    return dbutils.secrets.get(scope="default", key=secret_key)
-            return default_value
-        except Exception:
-            logger.warning(f"Could not retrieve secret for key: {secret_key}, using default")
+                except Exception as e:
+                    logger.warning(f"Could not retrieve secret from scope '{scope}' with key '{key}': {e}")
+                    return default_value
+            else:
+                # Try to find the secret in available scopes
+                # Common scope names to try
+                common_scopes = ["default", "databricks", "secrets", "keyvault"]
+                
+                # First, try to list available scopes
+                available_scopes = []
+                try:
+                    # List all available secret scopes
+                    scopes_list = dbutils.secrets.listScopes()
+                    available_scopes = [scope.name for scope in scopes_list]
+                    logger.debug(f"Available secret scopes: {available_scopes}")
+                except Exception:
+                    # If we can't list scopes, use common ones
+                    available_scopes = common_scopes
+                
+                # Try common scopes first, then all available scopes
+                scopes_to_try = list(set(common_scopes + available_scopes))
+                
+                for scope in scopes_to_try:
+                    try:
+                        # Check if key exists in this scope
+                        keys = dbutils.secrets.list(scope=scope)
+                        key_names = [k.key for k in keys]
+                        
+                        # Try exact match first
+                        if secret_key in key_names:
+                            return dbutils.secrets.get(scope=scope, key=secret_key)
+                        
+                        # Try case-insensitive match
+                        key_lower = secret_key.lower()
+                        for key_name in key_names:
+                            if key_name.lower() == key_lower:
+                                return dbutils.secrets.get(scope=scope, key=key_name)
+                    except Exception:
+                        # Scope doesn't exist or key not found, try next scope
+                        continue
+                
+                # If we get here, secret wasn't found in any scope
+                logger.warning(
+                    f"Could not retrieve secret for key '{secret_key}' from any available scope. "
+                    f"Tried scopes: {scopes_to_try}. Using default value."
+                )
+                return default_value
+                
+        except Exception as e:
+            logger.warning(f"Error retrieving secret for key '{secret_key}': {e}. Using default value.")
             return default_value
 
 
@@ -1172,8 +1222,19 @@ class JDBCMetadataCollector(BaseMetadataCollector):
         user = details.get("user_name", "")
         password_key = details.get("password_key", "")
         
-        # Get password from secrets - NEVER log this!
+        # Get password from secrets - NEVER log the password value!
         password = get_secret_value(password_key, "")
+        
+        # Validate that we have required credentials
+        if not user:
+            self.logger.warning(f"No user_name configured for {self.config.id}")
+        if not password_key:
+            self.logger.warning(f"No password_key configured for {self.config.id}")
+        elif not password:
+            self.logger.error(
+                f"Failed to retrieve password for {self.config.id} using key '{password_key}'. "
+                f"Connection will likely fail. Please verify the secret key exists in Databricks secrets."
+            )
         
         properties = {
             "user": user,
