@@ -49,6 +49,112 @@ from pyspark.sql.types import (
 )
 
 # COMMAND ----------
+# DBTITLE 1,DPCommonFunctions Fallbacks
+# Fallback functions if DPCommonFunctions is not available or functions are missing
+
+def get_secret_value(secret_key: str, default_value: str = "") -> str:
+    """
+    Get secret value from Databricks secrets.
+    
+    Fallback implementation if DPCommonFunctions.get_secret_value is not available.
+    """
+    try:
+        # Try to use DPCommonFunctions version first
+        from DPCommonFunctions import get_secret_value as dp_get_secret_value
+        return dp_get_secret_value(secret_key, default_value)
+    except (ImportError, NameError, AttributeError):
+        # Fallback: try dbutils directly
+        try:
+            if secret_key:
+                # Format: scope/key
+                if "/" in secret_key:
+                    scope, key = secret_key.split("/", 1)
+                    return dbutils.secrets.get(scope=scope, key=key)
+                else:
+                    # Try default scope
+                    return dbutils.secrets.get(scope="default", key=secret_key)
+            return default_value
+        except Exception:
+            logger.warning(f"Could not retrieve secret for key: {secret_key}, using default")
+            return default_value
+
+
+def read_table(table_name: str) -> DataFrame:
+    """
+    Read a table from the catalog.
+    
+    Fallback implementation if DPCommonFunctions.read_table is not available.
+    """
+    try:
+        # Try to use DPCommonFunctions version first
+        from DPCommonFunctions import read_table as dp_read_table
+        return dp_read_table(table_name)
+    except (ImportError, NameError, AttributeError):
+        # Fallback: use spark.read.table
+        try:
+            return spark.read.table(table_name)
+        except Exception as e:
+            logger.error(f"Failed to read table {table_name}: {e}")
+            raise
+
+
+def write_table(
+    df: DataFrame,
+    table_name: str,
+    partition_cols: Optional[List[str]] = None,
+    cdc_check: bool = False,
+    source_delete: bool = False
+) -> None:
+    """
+    Write DataFrame to a table.
+    
+    Fallback implementation if DPCommonFunctions.write_table is not available.
+    """
+    try:
+        # Try to use DPCommonFunctions version first
+        from DPCommonFunctions import write_table as dp_write_table
+        dp_write_table(df, table_name, partition_cols, cdc_check, source_delete)
+    except (ImportError, NameError, AttributeError):
+        # Fallback: use standard Spark write
+        try:
+            writer = df.write.mode("overwrite")
+            if partition_cols:
+                writer = writer.partitionBy(*partition_cols)
+            writer.saveAsTable(table_name)
+            logger.info(f"Successfully wrote to table {table_name}")
+        except Exception as e:
+            logger.error(f"Failed to write table {table_name}: {e}")
+            raise
+
+
+def resolve_table_name(catalog: str, schema: str, table: str) -> str:
+    """
+    Resolve a fully qualified table name.
+    
+    Fallback implementation if DPCommonFunctions.resolve_table_name is not available.
+    """
+    try:
+        # Try to use DPCommonFunctions version first
+        from DPCommonFunctions import resolve_table_name as dp_resolve_table_name
+        return dp_resolve_table_name(catalog, schema, table)
+    except (ImportError, NameError, AttributeError):
+        # Fallback: construct table name directly
+        return f"{catalog}.{schema}.{table}"
+
+
+# Try to import Catalog and Schema from DPCommonFunctions, create fallbacks if not available
+try:
+    from DPCommonFunctions import Catalog, Schema
+except (ImportError, NameError, AttributeError):
+    # Fallback: create simple enum-like classes
+    class Catalog:
+        class IDP:
+            name = "qa_idp"
+    
+    class Schema:
+        CONFIG = "config"
+
+# COMMAND ----------
 # DBTITLE 1,Logger Setup
 
 def setup_logger(name: str, log_level: str = "INFO") -> logging.Logger:
