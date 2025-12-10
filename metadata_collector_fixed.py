@@ -52,80 +52,37 @@ from pyspark.sql.types import (
 # DBTITLE 1,DPCommonFunctions Fallbacks
 # Fallback functions if DPCommonFunctions is not available or functions are missing
 
-def get_secret_value(secret_key: str, default_value: str = "") -> str:
-    """
-    Get secret value from Databricks secrets.
-    
-    Fallback implementation if DPCommonFunctions.get_secret_value is not available.
-    Supports multiple secret key formats:
-    - "scope/key" format
-    - Just the key (will try common scopes)
-    """
-    if not secret_key:
-        return default_value
-    
-    try:
-        # Try to use DPCommonFunctions version first
-        from DPCommonFunctions import get_secret_value as dp_get_secret_value
-        return dp_get_secret_value(secret_key, default_value)
-    except (ImportError, NameError, AttributeError):
-        # Fallback: try dbutils directly
+# Note: get_secret_value is provided by DPCommonFunctions via %run ./DPCommonFunctions
+# The original code uses it directly without defining it here.
+# This fallback is only used if DPCommonFunctions is not available or get_secret_value is missing.
+
+# Check if get_secret_value is already available (from %run ./DPCommonFunctions)
+if 'get_secret_value' not in globals():
+    # Define fallback only if not available
+    def get_secret_value(secret_key: str, default_value: str = "") -> str:
+        """
+        Get secret value from Databricks secrets.
+        
+        Fallback implementation if DPCommonFunctions.get_secret_value is not available.
+        This matches the typical behavior of DPCommonFunctions.get_secret_value.
+        """
+        if not secret_key:
+            return default_value
+        
         try:
             # Format: scope/key
             if "/" in secret_key:
                 scope, key = secret_key.split("/", 1)
-                try:
-                    return dbutils.secrets.get(scope=scope, key=key)
-                except Exception as e:
-                    logger.warning(f"Could not retrieve secret from scope '{scope}' with key '{key}': {e}")
-                    return default_value
+                return dbutils.secrets.get(scope=scope, key=key)
             else:
-                # Try to find the secret in available scopes
-                # Common scope names to try
-                common_scopes = ["default", "databricks", "secrets", "keyvault"]
-                
-                # First, try to list available scopes
-                available_scopes = []
-                try:
-                    # List all available secret scopes
-                    scopes_list = dbutils.secrets.listScopes()
-                    available_scopes = [scope.name for scope in scopes_list]
-                    logger.debug(f"Available secret scopes: {available_scopes}")
-                except Exception:
-                    # If we can't list scopes, use common ones
-                    available_scopes = common_scopes
-                
-                # Try common scopes first, then all available scopes
-                scopes_to_try = list(set(common_scopes + available_scopes))
-                
-                for scope in scopes_to_try:
+                # Try common scopes - "secrets" is most common in Databricks
+                for scope in ["secrets", "default", "databricks"]:
                     try:
-                        # Check if key exists in this scope
-                        keys = dbutils.secrets.list(scope=scope)
-                        key_names = [k.key for k in keys]
-                        
-                        # Try exact match first
-                        if secret_key in key_names:
-                            return dbutils.secrets.get(scope=scope, key=secret_key)
-                        
-                        # Try case-insensitive match
-                        key_lower = secret_key.lower()
-                        for key_name in key_names:
-                            if key_name.lower() == key_lower:
-                                return dbutils.secrets.get(scope=scope, key=key_name)
+                        return dbutils.secrets.get(scope=scope, key=secret_key)
                     except Exception:
-                        # Scope doesn't exist or key not found, try next scope
                         continue
-                
-                # If we get here, secret wasn't found in any scope
-                logger.warning(
-                    f"Could not retrieve secret for key '{secret_key}' from any available scope. "
-                    f"Tried scopes: {scopes_to_try}. Using default value."
-                )
                 return default_value
-                
-        except Exception as e:
-            logger.warning(f"Error retrieving secret for key '{secret_key}': {e}. Using default value.")
+        except Exception:
             return default_value
 
 
