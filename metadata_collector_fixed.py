@@ -695,6 +695,11 @@ class BaseMetadataCollector(ABC):
         excl = self._get_exclude_list()
         append_only = self._get_append_only_list()
         
+        # Helper function to escape SQL strings
+        def escape_sql_string(s: str) -> str:
+            """Escape single quotes for SQL string literals."""
+            return str(s).replace("'", "''")
+        
         # Pre-compute literals once (avoid repeated F.lit() calls)
         source_id_lit = F.lit(self.config.id)
         catalog_name_lit = F.upper(F.lit(self.config.catalog_name))
@@ -706,6 +711,10 @@ class BaseMetadataCollector(ABC):
         include_array = F.array(*[F.lit(x) for x in incl]) if incl else F.array().cast(ArrayType(StringType()))
         exclude_array = F.array(*[F.lit(x) for x in excl]) if excl else F.array().cast(ArrayType(StringType()))
         append_only_array = F.array(*[F.lit(x) for x in append_only]) if append_only else F.array().cast(ArrayType(StringType()))
+        
+        # Build SQL array strings for is_included expression (escape quotes)
+        excl_array_str = ','.join([f"'{escape_sql_string(x)}'" for x in excl]) if excl else ''
+        incl_array_str = ','.join([f"'{escape_sql_string(x)}'" for x in incl]) if incl else ''
         
         # Check which columns exist
         existing_cols = set(raw_df.columns)
@@ -739,9 +748,9 @@ class BaseMetadataCollector(ABC):
             F.expr(f"""
                 CAST(CASE 
                     WHEN {len(incl)} = 0 AND {len(excl)} = 0 THEN 1
-                    WHEN array_contains(array({','.join([f"'{x}'" for x in excl]) if excl else ''}), table_name) THEN 0
+                    WHEN array_contains(array({excl_array_str if excl_array_str else ''}), table_name) THEN 0
                     WHEN {len(incl)} = 0 THEN 1
-                    WHEN array_contains(array({','.join([f"'{x}'" for x in incl]) if incl else ''}), table_name) THEN 1
+                    WHEN array_contains(array({incl_array_str if incl_array_str else ''}), table_name) THEN 1
                     ELSE 0
                 END AS INT)
             """).alias("is_included"),
@@ -1065,7 +1074,7 @@ class JDBCMetadataCollector(BaseMetadataCollector):
             catalog_df = catalog_df.persist(StorageLevel.MEMORY_AND_DISK)
             
             # Check if empty before expensive operations
-            if catalog_df.head(1) == []:
+            if catalog_df.rdd.isEmpty():
                 catalog_df.unpersist()
                 return None
             
@@ -1091,17 +1100,19 @@ class JDBCMetadataCollector(BaseMetadataCollector):
             if self.compute_row_count:
                 self.logger.info(f"Computing row counts for tables in {self.config.id}")
                 try:
-                    # Get distinct table names with their full names
-                    table_info = grouped.select(
+                    # Get distinct table names with their full names from the original catalog_df
+                    # We need to get this before grouping, or select from grouped correctly
+                    table_info_df = catalog_df.select(
                         F.col("TABLE_NAME"),
-                        F.col("full_table_name")
-                    ).distinct().collect()
+                        F.col("FULL_TABLE_NAME")
+                    ).distinct()
+                    table_info = table_info_df.collect()
                     
                     # Build row count queries for each table
                     row_count_data = []
                     for row in table_info:
                         table_name = row["TABLE_NAME"]
-                        full_table_name = row["full_table_name"]
+                        full_table_name = row["FULL_TABLE_NAME"]
                         
                         # Extract schema and table name from full_table_name
                         # Format is typically "schema.table" or "schema.table" for SQL Server
@@ -1114,33 +1125,57 @@ class JDBCMetadataCollector(BaseMetadataCollector):
                             actual_table = table_name
                         
                         # Build COUNT query based on database type
+                        # Escape identifiers to prevent SQL injection (though input is from DB metadata)
                         db_type = self.config.data_source_type
                         if db_type == DataSourceType.SQLSERVER.value:
+                            # SQL Server uses square brackets for identifiers
                             if schema_name:
-                                count_query = f"SELECT COUNT(*) as row_count FROM [{schema_name}].[{actual_table}]"
+                                # Escape brackets in names
+                                schema_escaped = schema_name.replace("]", "]]")
+                                table_escaped = actual_table.replace("]", "]]")
+                                count_query = f"SELECT COUNT(*) as row_count FROM [{schema_escaped}].[{table_escaped}]"
                             else:
-                                count_query = f"SELECT COUNT(*) as row_count FROM [{actual_table}]"
+                                table_escaped = actual_table.replace("]", "]]")
+                                count_query = f"SELECT COUNT(*) as row_count FROM [{table_escaped}]"
                         elif db_type == DataSourceType.POSTGRESQL.value:
+                            # PostgreSQL uses double quotes for identifiers
                             if schema_name:
-                                count_query = f'SELECT COUNT(*) as row_count FROM "{schema_name}"."{actual_table}"'
+                                # Escape quotes in names
+                                schema_escaped = schema_name.replace('"', '""')
+                                table_escaped = actual_table.replace('"', '""')
+                                count_query = f'SELECT COUNT(*) as row_count FROM "{schema_escaped}"."{table_escaped}"'
                             else:
-                                count_query = f'SELECT COUNT(*) as row_count FROM "{actual_table}"'
+                                table_escaped = actual_table.replace('"', '""')
+                                count_query = f'SELECT COUNT(*) as row_count FROM "{table_escaped}"'
                         elif db_type == DataSourceType.MARIADB.value:
+                            # MariaDB uses backticks for identifiers
                             if schema_name:
-                                count_query = f"SELECT COUNT(*) as row_count FROM `{schema_name}`.`{actual_table}`"
+                                # Escape backticks in names
+                                schema_escaped = schema_name.replace("`", "``")
+                                table_escaped = actual_table.replace("`", "``")
+                                count_query = f"SELECT COUNT(*) as row_count FROM `{schema_escaped}`.`{table_escaped}`"
                             else:
-                                count_query = f"SELECT COUNT(*) as row_count FROM `{actual_table}`"
+                                table_escaped = actual_table.replace("`", "``")
+                                count_query = f"SELECT COUNT(*) as row_count FROM `{table_escaped}`"
                         else:
-                            # Generic fallback
-                            count_query = f"SELECT COUNT(*) as row_count FROM {actual_table}"
+                            # Generic fallback - use identifier quoting if possible
+                            if schema_name:
+                                count_query = f"SELECT COUNT(*) as row_count FROM {schema_name}.{actual_table}"
+                            else:
+                                count_query = f"SELECT COUNT(*) as row_count FROM {actual_table}"
                         
                         try:
                             count_df = (
                                 self.spark.read
                                 .jdbc(url=url, table=f"({count_query}) AS count_query", properties=properties)
                             )
-                            count_result = count_df.collect()[0]["row_count"]
-                            row_count_data.append((table_name, count_result))
+                            count_rows = count_df.collect()
+                            if count_rows and len(count_rows) > 0:
+                                count_result = count_rows[0]["row_count"]
+                                row_count_data.append((table_name, count_result))
+                            else:
+                                self.logger.warning(f"No row count result for {full_table_name}")
+                                row_count_data.append((table_name, None))
                         except Exception as e:
                             self.logger.warning(f"Failed to get row count for {full_table_name}: {e}")
                             row_count_data.append((table_name, None))
@@ -1160,7 +1195,13 @@ class JDBCMetadataCollector(BaseMetadataCollector):
             # OPTIMIZATION: Use SQL expression for transform (faster than UDF)
             # Build final result in single select
             configured_ids = self._get_configured_id_columns()
-            configured_ids_array = f"array({','.join([repr(c) for c in configured_ids])})" if configured_ids else "array()"
+            # Build SQL array with proper string escaping
+            if configured_ids:
+                # Escape single quotes and wrap in quotes for SQL string literals
+                escaped_ids = [f"'{str(c).replace(chr(39), chr(39)+chr(39))}'" for c in configured_ids]
+                configured_ids_array = f"array({','.join(escaped_ids)})"
+            else:
+                configured_ids_array = "array()"
             
             result = grouped.select(
                 F.col("full_table_name"),
@@ -2368,7 +2409,8 @@ class MetadataOrchestrator:
         """Print collection summary statistics."""
         success_count = summary_df.filter(F.col("status") == "Success").count()
         failure_count = summary_df.filter(F.col("status") == "Failure").count()
-        total_duration = summary_df.agg(F.sum("duration_seconds")).collect()[0][0] or 0
+        duration_result = summary_df.agg(F.sum("duration_seconds")).collect()
+        total_duration = duration_result[0][0] if duration_result and len(duration_result) > 0 else 0
         
         print("=" * 70)
         print("METADATA COLLECTION SUMMARY")
@@ -2650,11 +2692,17 @@ if results:
             final_df = check_duplicate_and_update(final_df)
             
             # Resolve target table
-            config_table = resolve_table_name(
-                Catalog.IDP.name, 
-                Schema.CONFIG, 
-                "meta_data_registry"
-            )
+            # Try to use resolve_table_name from DPCommonFunctions, fallback to direct table name
+            try:
+                config_table = resolve_table_name(
+                    Catalog.IDP.name, 
+                    Schema.CONFIG, 
+                    "meta_data_registry"
+                )
+            except (NameError, AttributeError):
+                # Fallback if Catalog/Schema not available - use direct table name
+                logger.warning("Catalog/Schema not available, using direct table name")
+                config_table = "qa_idp.config.meta_data_registry"
             
             # Select columns in correct order (matching output schema)
             final_df = final_df.select(
