@@ -1120,11 +1120,49 @@ class JDBCMetadataCollector(BaseMetadataCollector):
         db_type = self.config.data_source_type
         
         if db_type == DataSourceType.SQLSERVER.value:
-            return f"jdbc:sqlserver://{db_host}:{db_port};databaseName={db_name}"
+            # Build SQL Server URL with SSL configuration
+            # Add SSL parameters to handle certificate validation issues
+            ssl_params = []
+            
+            # Check if SSL settings are configured
+            encrypt = details.get("encrypt", "true")  # Default to encrypt=true
+            trust_server_cert = details.get("trustServerCertificate", "true")  # Default to trust for internal servers
+            
+            ssl_params.append(f"encrypt={encrypt}")
+            ssl_params.append(f"trustServerCertificate={trust_server_cert}")
+            
+            # Add hostNameInCertificate if provided (for certificate validation)
+            hostname_in_cert = details.get("hostNameInCertificate")
+            if hostname_in_cert:
+                ssl_params.append(f"hostNameInCertificate={hostname_in_cert}")
+            
+            # Add other optional SSL parameters
+            if details.get("trustStore"):
+                ssl_params.append(f"trustStore={details.get('trustStore')}")
+            if details.get("trustStorePassword"):
+                ssl_params.append(f"trustStorePassword={details.get('trustStorePassword')}")
+            
+            # Build URL with SSL parameters
+            url_params = f"databaseName={db_name};" + ";".join(ssl_params)
+            return f"jdbc:sqlserver://{db_host}:{db_port};{url_params}"
         elif db_type == DataSourceType.POSTGRESQL.value:
-            return f"jdbc:postgresql://{db_host}:{db_port}/{db_name}"
+            # PostgreSQL SSL parameters
+            ssl_mode = details.get("sslmode", "require")
+            url = f"jdbc:postgresql://{db_host}:{db_port}/{db_name}?sslmode={ssl_mode}"
+            if details.get("sslrootcert"):
+                url += f"&sslrootcert={details.get('sslrootcert')}"
+            return url
         elif db_type == DataSourceType.MARIADB.value:
-            return f"jdbc:mariadb://{db_host}:{db_port}/{db_name}"
+            # MariaDB SSL parameters
+            url = f"jdbc:mariadb://{db_host}:{db_port}/{db_name}"
+            ssl_params = []
+            if details.get("useSSL") is not None:
+                ssl_params.append(f"useSSL={details.get('useSSL')}")
+            if details.get("trustServerCertificate") is not None:
+                ssl_params.append(f"trustServerCertificate={details.get('trustServerCertificate')}")
+            if ssl_params:
+                url += "?" + "&".join(ssl_params)
+            return url
         else:
             return f"jdbc:{db_type.lower()}://{db_host}:{db_port}/{db_name}"
     
@@ -1137,11 +1175,36 @@ class JDBCMetadataCollector(BaseMetadataCollector):
         # Get password from secrets - NEVER log this!
         password = get_secret_value(password_key, "")
         
-        return {
+        properties = {
             "user": user,
             "password": password,
             "driver": self._get_jdbc_driver()
         }
+        
+        # Add database-specific SSL/connection properties if needed
+        db_type = self.config.data_source_type
+        
+        if db_type == DataSourceType.SQLSERVER.value:
+            # SQL Server specific properties
+            # These can also be set in connection URL, but properties take precedence
+            if details.get("loginTimeout"):
+                properties["loginTimeout"] = str(details.get("loginTimeout"))
+            if details.get("socketTimeout"):
+                properties["socketTimeout"] = str(details.get("socketTimeout"))
+        elif db_type == DataSourceType.POSTGRESQL.value:
+            # PostgreSQL specific properties
+            if details.get("sslrootcert"):
+                properties["sslrootcert"] = details.get("sslrootcert")
+            if details.get("sslmode"):
+                properties["sslmode"] = details.get("sslmode")
+        elif db_type == DataSourceType.MARIADB.value:
+            # MariaDB specific properties
+            if details.get("useSSL") is not None:
+                properties["useSSL"] = str(details.get("useSSL")).lower()
+            if details.get("trustServerCertificate") is not None:
+                properties["trustServerCertificate"] = str(details.get("trustServerCertificate")).lower()
+        
+        return properties
     
     def _fetch_raw_metadata(self) -> Optional[DataFrame]:
         """
