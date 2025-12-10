@@ -77,14 +77,13 @@ class CollectorConfig:
     JDBC_FETCH_SIZE: int = 10000
     JDBC_BATCH_SIZE: int = 1000
     JDBC_NUM_PARTITIONS: int = 10
-    CACHE_STORAGE_LEVEL: StorageLevel = field(default=StorageLevel.MEMORY_AND_DISK)
+    CACHE_STORAGE_LEVEL: StorageLevel = field(default_factory=lambda: StorageLevel.MEMORY_AND_DISK)
     RETRY_BASE_DELAY: float = 1.0
     RETRY_MAX_DELAY: float = 60.0
     CDC_SAMPLE_SIZE: int = 100
 
     def with_row_count(self, enabled: bool) -> CollectorConfig:
         """Create new config with modified row count setting"""
-        # Use fields() to get all field values since slots removes __dict__
         kwargs = {f.name: getattr(self, f.name) for f in fields(self)}
         kwargs['COMPUTE_ROW_COUNT'] = enabled
         return CollectorConfig(**kwargs)
