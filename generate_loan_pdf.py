@@ -50,8 +50,8 @@ def format_indian_number(num):
 
 
 def format_rupees(num):
-    """Format as Indian Rupees with ₹ symbol"""
-    return f"₹{format_indian_number(num)}"
+    """Format as Indian Rupees with Rs. symbol"""
+    return f"Rs. {format_indian_number(num)}"
 
 
 def create_styles():
@@ -276,10 +276,10 @@ def create_balance_chart():
     ax.axvline(x=25, color='#4caf50', linestyle='--', alpha=0.7, linewidth=1.5)
     
     # Add annotations
-    ax.annotate('₹1.5 Cr Disbursed\n(Mar 2026)', xy=(1, 1.5), xytext=(5, 1.7),
+    ax.annotate('Rs. 1.5 Cr Disbursed\n(Mar 2026)', xy=(1, 1.5), xytext=(5, 1.7),
                 fontsize=9, color='#2e7d32', fontweight='bold',
                 arrowprops=dict(arrowstyle='->', color='#4caf50'))
-    ax.annotate('₹1 Cr Additional\n(Mar 2028)', xy=(25, 1.86), xytext=(30, 2.0),
+    ax.annotate('Rs. 1 Cr Additional\n(Mar 2028)', xy=(25, 1.86), xytext=(30, 2.0),
                 fontsize=9, color='#2e7d32', fontweight='bold',
                 arrowprops=dict(arrowstyle='->', color='#4caf50'))
     ax.annotate('Loan Closure\n(Sep 2033)', xy=(91, 0), xytext=(80, 0.3),
@@ -288,7 +288,7 @@ def create_balance_chart():
     
     # Styling
     ax.set_xlabel('Month Number', fontsize=11, fontweight='bold', color='#37474f')
-    ax.set_ylabel('Outstanding Balance (₹ Crores)', fontsize=11, fontweight='bold', color='#37474f')
+    ax.set_ylabel('Outstanding Balance (Rs. Crores)', fontsize=11, fontweight='bold', color='#37474f')
     ax.set_title('Outstanding Balance Trajectory Over Loan Tenure', 
                  fontsize=14, fontweight='bold', color='#1a237e', pad=15)
     
@@ -320,8 +320,8 @@ def create_payment_breakdown_chart():
     total_emi = 27006737
     
     sizes = [total_principal, total_interest]
-    labels = [f'Principal\n₹{format_indian_number(total_principal)}\n(80.4%)', 
-              f'Interest\n₹{format_indian_number(total_interest)}\n(19.6%)']
+    labels = [f'Principal\nRs. {format_indian_number(total_principal)}\n(80.4%)', 
+              f'Interest\nRs. {format_indian_number(total_interest)}\n(19.6%)']
     colors_pie = ['#4caf50', '#f44336']
     explode = (0.02, 0.02)
     
@@ -329,7 +329,7 @@ def create_payment_breakdown_chart():
                            startangle=90, wedgeprops=dict(width=0.7, edgecolor='white'))
     
     # Add center text
-    ax.text(0, 0, f'Total Paid\n₹{format_indian_number(31106737)}', 
+    ax.text(0, 0, f'Total Paid\nRs. {format_indian_number(31106737)}', 
             ha='center', va='center', fontsize=14, fontweight='bold', color='#1a237e')
     
     # Add legend
@@ -367,7 +367,7 @@ def create_yearly_comparison_chart():
     bars3 = ax.bar([i + width for i in x], prepay, width, label='Prepayment', color='#4caf50', alpha=0.9)
     
     ax.set_xlabel('Calendar Year', fontsize=11, fontweight='bold', color='#37474f')
-    ax.set_ylabel('Amount (₹ Lakhs)', fontsize=11, fontweight='bold', color='#37474f')
+    ax.set_ylabel('Amount (Rs. Lakhs)', fontsize=11, fontweight='bold', color='#37474f')
     ax.set_title('Year-wise Payment Analysis', fontsize=14, fontweight='bold', 
                  color='#1a237e', pad=15)
     ax.set_xticks(x)
@@ -404,7 +404,7 @@ def create_interest_savings_chart():
     ax.plot(months, cumulative_interest, color='#d32f2f', linewidth=2.5)
     
     ax.set_xlabel('Month Number', fontsize=11, fontweight='bold', color='#37474f')
-    ax.set_ylabel('Cumulative Interest (₹ Lakhs)', fontsize=11, fontweight='bold', color='#37474f')
+    ax.set_ylabel('Cumulative Interest (Rs. Lakhs)', fontsize=11, fontweight='bold', color='#37474f')
     ax.set_title('Cumulative Interest Paid Over Time', fontsize=14, fontweight='bold', 
                  color='#1a237e', pad=15)
     ax.grid(True, alpha=0.3, linestyle='--')
@@ -412,7 +412,7 @@ def create_interest_savings_chart():
     ax.spines['right'].set_visible(False)
     
     # Final annotation
-    ax.annotate(f'Total Interest: ₹{format_indian_number(6106737)}', 
+    ax.annotate(f'Total Interest: Rs. {format_indian_number(6106737)}', 
                 xy=(91, cumulative_interest[-1]), xytext=(60, 55),
                 fontsize=10, color='#d32f2f', fontweight='bold',
                 arrowprops=dict(arrowstyle='->', color='#d32f2f'))
@@ -480,11 +480,11 @@ def build_pdf():
         [Paragraph("<b>Total Principal</b>", styles['MetricLabel']),
          Paragraph("<b>Total Interest</b>", styles['MetricLabel']),
          Paragraph("<b>Total Paid</b>", styles['MetricLabel'])],
-        [Paragraph(f"₹2.5 Crores", styles['KeyMetric']),
-         Paragraph(f"₹61.07 Lakhs", 
+        [Paragraph(f"Rs. 2.5 Crores", styles['KeyMetric']),
+         Paragraph(f"Rs. 61.07 Lakhs", 
                    ParagraphStyle('', fontSize=24, textColor=colors.HexColor('#d32f2f'), 
                                   fontName='Helvetica-Bold', alignment=TA_CENTER)),
-         Paragraph(f"₹3.11 Crores", 
+         Paragraph(f"Rs. 3.11 Crores", 
                    ParagraphStyle('', fontSize=24, textColor=colors.HexColor('#1565c0'), 
                                   fontName='Helvetica-Bold', alignment=TA_CENTER))],
     ]
@@ -511,7 +511,7 @@ def build_pdf():
     story.append(Paragraph("EXECUTIVE SUMMARY", styles['SectionHeading']))
     
     summary_text = """This comprehensive loan payoff plan outlines a strategic approach to repaying a home loan 
-    with a total principal of <b>₹2,50,00,000 (2.5 Crores)</b>. The plan incorporates regular EMI payments 
+    with a total principal of <b>Rs. 2,50,00,000 (2.5 Crores)</b>. The plan incorporates regular EMI payments 
     along with systematic prepayments to accelerate loan closure and minimize total interest outgo."""
     story.append(Paragraph(summary_text, styles['CustomBody']))
     
@@ -523,9 +523,9 @@ def build_pdf():
     overview_items = [
         f"<b>Start Date:</b> March 2026 (Initial Disbursal)",
         f"<b>EMI Commencement:</b> April 2026",
-        f"<b>Monthly EMI:</b> ₹3,00,000 per month",
-        f"<b>Annual Prepayments:</b> ₹1,00,000 (February) + ₹5,00,000 (October)",
-        f"<b>Total Prepayment per Year:</b> ₹6,00,000",
+        f"<b>Monthly EMI:</b> Rs. 3,00,000 per month",
+        f"<b>Annual Prepayments:</b> Rs. 1,00,000 (February) + Rs. 5,00,000 (October)",
+        f"<b>Total Prepayment per Year:</b> Rs. 6,00,000",
         f"<b>Projected Closure:</b> September 2033 (Month 91)",
         f"<b>Effective Loan Tenure:</b> Approximately 7.58 years",
     ]
@@ -540,9 +540,9 @@ def build_pdf():
     
     outcomes_data = [
         ["Metric", "Amount", "Remarks"],
-        ["Total Principal Borrowed", format_rupees(25000000), "₹1.5 Cr (Mar 2026) + ₹1 Cr (Mar 2028)"],
-        ["Total EMI Payments", format_rupees(27006737), "90 months of ₹3L + final ₹2.07L"],
-        ["Total Prepayments", format_rupees(4100000), "₹1L × 8 (Feb) + ₹5L × 7 (Oct) + final year"],
+        ["Total Principal Borrowed", format_rupees(25000000), "Rs. 1.5 Cr (Mar 2026) + Rs. 1 Cr (Mar 2028)"],
+        ["Total EMI Payments", format_rupees(27006737), "90 months of Rs. 3L + final Rs. 2.07L"],
+        ["Total Prepayments", format_rupees(4100000), "Rs. 1L × 8 (Feb) + Rs. 5L × 7 (Oct) + final year"],
         ["Total Amount Paid", format_rupees(31106737), "EMI + Prepayments"],
         ["Total Interest Paid", format_rupees(6106737), "24.4% of principal"],
         ["Interest as % of Total", "19.6%", "Efficient due to prepayments"],
@@ -579,8 +579,8 @@ def build_pdf():
         ["Parameter", "Value", "Details"],
         ["Interest Rate", "7.54% p.a.", "Monthly reducing balance method"],
         ["Monthly Interest Rate", "0.6283%", "7.54% ÷ 12 months"],
-        ["Initial Disbursal", format_rupees(15000000), "March 2026 - ₹1.5 Crores"],
-        ["Second Disbursal", format_rupees(10000000), "March 2028 - ₹1 Crore additional"],
+        ["Initial Disbursal", format_rupees(15000000), "March 2026 - Rs. 1.5 Crores"],
+        ["Second Disbursal", format_rupees(10000000), "March 2028 - Rs. 1 Crore additional"],
         ["Total Principal", format_rupees(25000000), "Combined disbursal amount"],
         ["EMI Amount", format_rupees(300000), "Fixed monthly payment from Apr 2026"],
         ["February Prepayment", format_rupees(100000), "Annual prepayment in February"],
@@ -612,9 +612,9 @@ def build_pdf():
     notes = [
         "Interest is calculated on the outstanding principal at the beginning of each month.",
         "Prepayments are applied immediately after the EMI payment for that month.",
-        "The second disbursal of ₹1 Crore in March 2028 adds to the outstanding balance.",
+        "The second disbursal of Rs. 1 Crore in March 2028 adds to the outstanding balance.",
         "All prepayments should be accompanied by a request for <b>TENURE REDUCTION</b> (not EMI reduction).",
-        "The final month's payment of ₹2,06,737 closes the loan completely.",
+        "The final month's payment of Rs. 2,06,737 closes the loan completely.",
     ]
     
     for note in notes:
@@ -631,7 +631,7 @@ def build_pdf():
     story.append(Image(balance_chart, width=6*inch, height=3*inch))
     
     story.append(Paragraph("""The chart above shows how the outstanding loan balance changes over the 91-month tenure. 
-    Notice the jump in March 2028 due to the additional ₹1 Crore disbursal. The consistent decline thereafter 
+    Notice the jump in March 2028 due to the additional Rs. 1 Crore disbursal. The consistent decline thereafter 
     is a result of regular EMI payments combined with strategic prepayments.""", styles['CustomBody']))
     
     story.append(Spacer(1, 0.3*inch))
@@ -722,14 +722,14 @@ def build_pdf():
     story.append(Paragraph("Year-wise Insights", styles['SubsectionHeading']))
     
     insights = [
-        "<b>2026:</b> Loan starts with ₹1.5 Cr disbursal. Only 9 months of EMI (Apr-Dec). First Oct prepayment of ₹5L reduces balance significantly.",
-        "<b>2027:</b> Full year of 12 EMI payments. Both Feb (₹1L) and Oct (₹5L) prepayments made. Balance reduces from ₹1.27 Cr to ₹93.46 L.",
-        "<b>2028:</b> Critical year - Additional ₹1 Cr disbursed in March. Despite high interest (₹12.36L), balance managed through consistent payments.",
-        "<b>2029:</b> No new disbursal. Steady reduction with full prepayments. Interest decreases to ₹11.39L.",
-        "<b>2030:</b> Balance crosses below ₹1 Cr mark by year end. Interest drops to ₹9L.",
-        "<b>2031:</b> Accelerated reduction. Interest down to ₹6.42L. Closing balance at ₹64.63L.",
-        "<b>2032:</b> Final full year. Interest reduces to ₹3.65L. Balance at ₹26.28L by December.",
-        "<b>2033:</b> Final year with only 9 months. Last EMI of ₹2.07L closes the loan in September.",
+        "<b>2026:</b> Loan starts with Rs. 1.5 Cr disbursal. Only 9 months of EMI (Apr-Dec). First Oct prepayment of Rs. 5L reduces balance significantly.",
+        "<b>2027:</b> Full year of 12 EMI payments. Both Feb (Rs. 1L) and Oct (Rs. 5L) prepayments made. Balance reduces from Rs. 1.27 Cr to Rs. 93.46 L.",
+        "<b>2028:</b> Critical year - Additional Rs. 1 Cr disbursed in March. Despite high interest (Rs. 12.36L), balance managed through consistent payments.",
+        "<b>2029:</b> No new disbursal. Steady reduction with full prepayments. Interest decreases to Rs. 11.39L.",
+        "<b>2030:</b> Balance crosses below Rs. 1 Cr mark by year end. Interest drops to Rs. 9L.",
+        "<b>2031:</b> Accelerated reduction. Interest down to Rs. 6.42L. Closing balance at Rs. 64.63L.",
+        "<b>2032:</b> Final full year. Interest reduces to Rs. 3.65L. Balance at Rs. 26.28L by December.",
+        "<b>2033:</b> Final year with only 9 months. Last EMI of Rs. 2.07L closes the loan in September.",
     ]
     
     for insight in insights:
@@ -748,7 +748,7 @@ def build_pdf():
         "<b>Interest:</b> Interest accrued for the month (Opening × 7.54% ÷ 12)",
         "<b>Disbursal:</b> Any new loan amount disbursed during the month",
         "<b>EMI:</b> Equated Monthly Installment paid",
-        "<b>Prepay:</b> Additional prepayment made (Feb: ₹1L, Oct: ₹5L)",
+        "<b>Prepay:</b> Additional prepayment made (Feb: Rs. 1L, Oct: Rs. 5L)",
         "<b>Closing:</b> Outstanding balance at end of month (Opening + Interest + Disbursal - EMI - Prepay)",
     ]
     
@@ -849,7 +849,7 @@ def build_pdf():
     story.append(Paragraph("Monthly Actions (Every Month from April 2026)", styles['SubsectionHeading']))
     
     monthly_actions = [
-        "Ensure ₹3,00,000 is available in your loan-linked account before EMI due date",
+        "Ensure Rs. 3,00,000 is available in your loan-linked account before EMI due date",
         "Verify EMI deduction has occurred and check updated outstanding balance",
         "Review bank statement to confirm correct EMI amount was debited",
         "Keep records of all EMI payments for tax documentation (if applicable)",
@@ -861,10 +861,10 @@ def build_pdf():
     story.append(Spacer(1, 0.2*inch))
     
     # February Actions
-    story.append(Paragraph("February Actions (Annual Prepayment - ₹1,00,000)", styles['SubsectionHeading']))
+    story.append(Paragraph("February Actions (Annual Prepayment - Rs. 1,00,000)", styles['SubsectionHeading']))
     
     feb_actions = [
-        "Transfer ₹1,00,000 to loan account or visit bank for prepayment",
+        "Transfer Rs. 1,00,000 to loan account or visit bank for prepayment",
         "<b>IMPORTANT:</b> Submit written request for <b>TENURE REDUCTION</b> (NOT EMI reduction)",
         "Collect acknowledgment receipt for the prepayment",
         "Verify the prepayment reflects in next month's statement",
@@ -877,10 +877,10 @@ def build_pdf():
     story.append(Spacer(1, 0.2*inch))
     
     # October Actions
-    story.append(Paragraph("October Actions (Annual Prepayment - ₹5,00,000)", styles['SubsectionHeading']))
+    story.append(Paragraph("October Actions (Annual Prepayment - Rs. 5,00,000)", styles['SubsectionHeading']))
     
     oct_actions = [
-        "Transfer ₹5,00,000 to loan account or visit bank for prepayment",
+        "Transfer Rs. 5,00,000 to loan account or visit bank for prepayment",
         "<b>IMPORTANT:</b> Submit written request for <b>TENURE REDUCTION</b> (NOT EMI reduction)",
         "Collect acknowledgment receipt for the prepayment",
         "Verify the prepayment reflects in next month's statement",
@@ -898,12 +898,12 @@ def build_pdf():
     
     key_dates_data = [
         ["Date", "Event", "Action Required"],
-        ["March 2026", "Loan Starts", "Disbursal of ₹1,50,00,000"],
-        ["April 2026", "First EMI", "Ensure ₹3,00,000 available"],
-        ["October 2026", "First Oct Prepay", "Prepay ₹5,00,000 + Tenure reduction"],
-        ["February 2027", "First Feb Prepay", "Prepay ₹1,00,000 + Tenure reduction"],
-        ["March 2028", "Second Disbursal", "Additional ₹1,00,00,000 disbursed"],
-        ["September 2033", "Loan Closure", "Final payment ₹2,06,737"],
+        ["March 2026", "Loan Starts", "Disbursal of Rs. 1,50,00,000"],
+        ["April 2026", "First EMI", "Ensure Rs. 3,00,000 available"],
+        ["October 2026", "First Oct Prepay", "Prepay Rs. 5,00,000 + Tenure reduction"],
+        ["February 2027", "First Feb Prepay", "Prepay Rs. 1,00,000 + Tenure reduction"],
+        ["March 2028", "Second Disbursal", "Additional Rs. 1,00,00,000 disbursed"],
+        ["September 2033", "Loan Closure", "Final payment Rs. 2,06,737"],
     ]
     
     key_dates_table = Table(key_dates_data, colWidths=[1.2*inch, 1.5*inch, 3.3*inch])
@@ -935,9 +935,9 @@ def build_pdf():
     benefits_data = [
         ["Benefit", "Details"],
         ["Reduced Tenure", "Loan closes in ~7.58 years instead of typical 15-20 years"],
-        ["Lower Total Interest", "Interest of ₹61.07 Lakhs (24.4% of principal) is significantly lower than standard loans"],
+        ["Lower Total Interest", "Interest of Rs. 61.07 Lakhs (24.4% of principal) is significantly lower than standard loans"],
         ["Psychological Benefit", "Being debt-free sooner provides peace of mind"],
-        ["Increased Cash Flow Later", "Once loan closes, ₹3L/month becomes available for investments"],
+        ["Increased Cash Flow Later", "Once loan closes, Rs. 3L/month becomes available for investments"],
         ["Asset Ownership", "Full property ownership achieved 7-12 years earlier"],
     ]
     
@@ -985,7 +985,7 @@ def build_pdf():
     
     risks = [
         "<b>Interest Rate Changes:</b> If the loan has a floating rate, interest rate increases will affect the schedule. Request updated amortization after rate changes.",
-        "<b>Income Stability:</b> Ensure stable income to maintain ₹3L/month EMI + ₹6L annual prepayments.",
+        "<b>Income Stability:</b> Ensure stable income to maintain Rs. 3L/month EMI + Rs. 6L annual prepayments.",
         "<b>Emergency Fund:</b> Maintain 6-12 months of EMI as emergency fund before aggressive prepayments.",
         "<b>Tax Benefits:</b> Consider Section 80C and Section 24 benefits before deciding prepayment amounts.",
         "<b>Opportunity Cost:</b> Evaluate if the prepayment amount could earn higher returns elsewhere (unlikely at 7.54% guaranteed savings).",
@@ -1018,11 +1018,11 @@ def build_pdf():
     
     final_summary = [
         ["", ""],
-        ["Total Principal Borrowed", format_rupees(25000000) + " (₹2.5 Crores)"],
-        ["Total Interest Paid", format_rupees(6106737) + " (₹61.07 Lakhs)"],
-        ["Total Amount Paid", format_rupees(31106737) + " (₹3.11 Crores)"],
-        ["Total EMI Payments", "91 months (₹3L × 90 + ₹2.07L final)"],
-        ["Total Prepayments", format_rupees(4100000) + " (₹41 Lakhs)"],
+        ["Total Principal Borrowed", format_rupees(25000000) + " (Rs. 2.5 Crores)"],
+        ["Total Interest Paid", format_rupees(6106737) + " (Rs. 61.07 Lakhs)"],
+        ["Total Amount Paid", format_rupees(31106737) + " (Rs. 3.11 Crores)"],
+        ["Total EMI Payments", "91 months (Rs. 3L × 90 + Rs. 2.07L final)"],
+        ["Total Prepayments", format_rupees(4100000) + " (Rs. 41 Lakhs)"],
         ["Loan Start Date", "March 2026"],
         ["Loan Closure Date", "September 2033"],
         ["Effective Tenure", "7 Years 7 Months (91 months)"],
@@ -1048,8 +1048,8 @@ def build_pdf():
     # Conclusion text
     story.append(Paragraph("""This loan payoff plan provides a clear, achievable path to complete debt freedom by 
     September 2033. By maintaining discipline with monthly EMI payments and strategic prepayments in February 
-    and October each year, you can successfully close a ₹2.5 Crore loan in approximately 7.58 years while 
-    paying only ₹61.07 Lakhs in interest - a testament to the power of systematic prepayment strategy.""", 
+    and October each year, you can successfully close a Rs. 2.5 Crore loan in approximately 7.58 years while 
+    paying only Rs. 61.07 Lakhs in interest - a testament to the power of systematic prepayment strategy.""", 
     styles['CustomBody']))
     
     story.append(Spacer(1, 0.2*inch))
@@ -1059,7 +1059,7 @@ def build_pdf():
     next_steps = [
         "Share this plan with all stakeholders for alignment",
         "Set up calendar reminders for February and October prepayments",
-        "Ensure loan account is set up for auto-debit of ₹3,00,000 monthly EMI",
+        "Ensure loan account is set up for auto-debit of Rs. 3,00,000 monthly EMI",
         "Request the bank for updated schedule after each prepayment",
         "Review this plan annually and adjust if interest rates change significantly",
     ]
