@@ -1193,6 +1193,10 @@
         
         function getBaseUrl() {
             // Use current origin for API calls
+            // If opened as file://, use localhost
+            if (window.location.protocol === 'file:') {
+                return 'http://localhost:5000';
+            }
             return window.location.origin;
         }
 
@@ -1350,9 +1354,33 @@
             }
         }
 
+        // ============== Server Connectivity Check ==============
+        
+        let serverConnected = false;
+        
+        async function checkServerConnection() {
+            try {
+                const response = await fetch(getBaseUrl() + '/health', {
+                    method: 'GET',
+                    headers: { 'Accept': 'application/json' }
+                });
+                
+                if (response.ok) {
+                    serverConnected = true;
+                    console.log('✅ Server connected');
+                    return true;
+                }
+            } catch (error) {
+                console.warn('Server connection check failed:', error);
+            }
+            
+            serverConnected = false;
+            return false;
+        }
+
         // ============== Initialization ==============
         
-        document.addEventListener('DOMContentLoaded', function() {
+        document.addEventListener('DOMContentLoaded', async function() {
             // Set default date to next month
             const today = new Date();
             today.setMonth(today.getMonth() + 1);
@@ -1383,6 +1411,19 @@
                     }
                 }
             });
+
+            // Check server connection on load
+            const connected = await checkServerConnection();
+            if (!connected) {
+                showToast('⚠️ Checking server connection...', 'warning', 3000);
+                // Retry after 2 seconds
+                setTimeout(async () => {
+                    const retry = await checkServerConnection();
+                    if (retry) {
+                        showToast('✅ Connected to server!', 'success', 2000);
+                    }
+                }, 2000);
+            }
         });
     </script>
 </body>

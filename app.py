@@ -2,20 +2,37 @@
 """
 Home Loan EMI Calculator Web Application
 Generates comprehensive PDF reports for loan payoff plans
+Cross-platform compatible (Windows, Mac, Linux)
 """
 
-from flask import Flask, render_template, request, send_file, jsonify, make_response
-from flask_cors import CORS
-from loan_pdf_generator import generate_loan_pdf, calculate_loan_schedule
-from datetime import datetime
+import sys
 import os
+
+# Set matplotlib backend before importing
+import matplotlib
+matplotlib.use('Agg')
+
+from flask import Flask, render_template, request, send_file, jsonify, make_response
+from datetime import datetime
 import traceback
+import tempfile
+
+# Try to import flask-cors, but make it optional
+try:
+    from flask_cors import CORS
+    HAS_CORS = True
+except ImportError:
+    HAS_CORS = False
+    print("Warning: flask-cors not installed. Run: pip install flask-cors")
 
 app = Flask(__name__)
-CORS(app)  # Enable CORS for all routes
+
+# Enable CORS if available
+if HAS_CORS:
+    CORS(app)
 
 # Configure Flask
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
+app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024
 app.config['JSON_SORT_KEYS'] = False
 
 
@@ -42,10 +59,10 @@ def parse_date(date_str):
 
 @app.after_request
 def after_request(response):
-    """Add headers to all responses"""
-    response.headers.add('Access-Control-Allow-Origin', '*')
-    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
-    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    """Add CORS headers to all responses"""
+    response.headers['Access-Control-Allow-Origin'] = '*'
+    response.headers['Access-Control-Allow-Headers'] = 'Content-Type, Authorization, Accept'
+    response.headers['Access-Control-Allow-Methods'] = 'GET, POST, PUT, DELETE, OPTIONS'
     return response
 
 
@@ -55,10 +72,52 @@ def index():
     return render_template('index.html')
 
 
-@app.route('/health')
+@app.route('/health', methods=['GET', 'OPTIONS'])
 def health():
     """Health check endpoint"""
-    return jsonify({'status': 'ok', 'message': 'Server is running'})
+    if request.method == 'OPTIONS':
+        return make_response('', 204)
+    return jsonify({
+        'status': 'ok',
+        'message': 'Server is running',
+        'platform': sys.platform,
+        'python_version': sys.version
+    })
+
+
+@app.route('/test')
+def test_page():
+    """Simple test page to verify server is accessible"""
+    return '''
+    <!DOCTYPE html>
+    <html>
+    <head><title>Server Test</title></head>
+    <body style="font-family: Arial, sans-serif; padding: 40px; text-align: center;">
+        <h1>✅ Server is Running!</h1>
+        <p>If you can see this page, the Flask server is working correctly.</p>
+        <p><a href="/" style="color: blue; font-size: 1.2em;">Go to Loan Calculator →</a></p>
+        <hr>
+        <h3>API Test:</h3>
+        <button onclick="testAPI()" style="padding: 10px 20px; font-size: 1em; cursor: pointer;">
+            Test API Connection
+        </button>
+        <p id="result" style="margin-top: 20px;"></p>
+        <script>
+            async function testAPI() {
+                const resultEl = document.getElementById('result');
+                resultEl.innerHTML = 'Testing...';
+                try {
+                    const response = await fetch('/health');
+                    const data = await response.json();
+                    resultEl.innerHTML = '<span style="color: green;">✅ API Working! ' + JSON.stringify(data) + '</span>';
+                } catch (error) {
+                    resultEl.innerHTML = '<span style="color: red;">❌ Error: ' + error.message + '</span>';
+                }
+            }
+        </script>
+    </body>
+    </html>
+    '''
 
 
 @app.route('/generate_pdf', methods=['POST', 'OPTIONS'])
@@ -68,6 +127,9 @@ def generate_pdf():
         return make_response('', 204)
     
     try:
+        # Import here to avoid startup issues
+        from loan_pdf_generator import generate_loan_pdf
+        
         # Get form data
         data = request.get_json()
         if not data:
@@ -87,45 +149,39 @@ def generate_pdf():
         # Parse interest rate
         interest_rate = parse_float(data.get('interest_rate'), 7.5)
         
-        # Parse part payments (up to 5)
+        # Parse part payments
         part_payments = []
         for i in range(1, 6):
             month = data.get(f'part_payment_month_{i}', '')
             amount = parse_float(data.get(f'part_payment_amount_{i}'), 0)
             if month and amount > 0:
-                part_payments.append({
-                    'month': month,
-                    'amount': amount
-                })
+                part_payments.append({'month': month, 'amount': amount})
         
         # Validate inputs
         if land_loan <= 0 and construction_loan <= 0:
-            return jsonify({'error': 'Please enter at least one loan amount (Land or Construction loan)'}), 400
+            return jsonify({'error': 'Please enter at least one loan amount'}), 400
         
         if not loan_start_date:
-            return jsonify({'error': 'Please enter a valid loan start date (format: YYYY-MM)'}), 400
+            return jsonify({'error': 'Please enter loan start date'}), 400
         
         if emi_amount <= 0:
-            return jsonify({'error': 'Please enter a valid EMI amount greater than 0'}), 400
+            return jsonify({'error': 'Please enter a valid EMI amount'}), 400
         
         if interest_rate <= 0 or interest_rate > 30:
             return jsonify({'error': 'Interest rate must be between 0.01% and 30%'}), 400
         
-        # Validate construction date if construction loan exists
         if construction_loan > 0 and not construction_start_date:
-            return jsonify({'error': 'Construction start date is required when construction loan is specified'}), 400
+            return jsonify({'error': 'Construction start date required for construction loan'}), 400
         
-        # Validate construction date is after loan start
-        if construction_start_date and loan_start_date:
-            if construction_start_date < loan_start_date:
-                return jsonify({'error': 'Construction start date must be on or after loan start date'}), 400
+        if construction_start_date and loan_start_date and construction_start_date < loan_start_date:
+            return jsonify({'error': 'Construction date must be after loan start date'}), 400
         
-        # Calculate monthly interest to validate EMI
+        # Validate EMI
         total_loan = land_loan + construction_loan
         monthly_interest = (total_loan * interest_rate / 100) / 12
         if emi_amount <= monthly_interest:
             return jsonify({
-                'error': f'EMI (Rs. {emi_amount:,.0f}) must be greater than monthly interest (Rs. {monthly_interest:,.0f}) to reduce principal'
+                'error': f'EMI must be greater than monthly interest (Rs. {monthly_interest:,.0f})'
             }), 400
         
         # Generate PDF
@@ -139,7 +195,7 @@ def generate_pdf():
             part_payments=part_payments
         )
         
-        # Read the PDF file and send it
+        # Read and send PDF
         with open(pdf_path, 'rb') as f:
             pdf_data = f.read()
         
@@ -149,21 +205,21 @@ def generate_pdf():
         response.headers['Content-Length'] = len(pdf_data)
         return response
         
-    except ValueError as e:
-        print(f"Validation error: {e}")
-        return jsonify({'error': f'Invalid input: {str(e)}'}), 400
     except Exception as e:
         print(f"Error generating PDF: {traceback.format_exc()}")
-        return jsonify({'error': f'Error generating PDF: {str(e)}'}), 500
+        return jsonify({'error': str(e)}), 500
 
 
 @app.route('/preview', methods=['POST', 'OPTIONS'])
 def preview():
-    """Preview loan calculation without generating PDF"""
+    """Preview loan calculation"""
     if request.method == 'OPTIONS':
         return make_response('', 204)
     
     try:
+        # Import here to avoid startup issues
+        from loan_pdf_generator import calculate_loan_schedule
+        
         data = request.get_json()
         if not data:
             return jsonify({'error': 'No data provided'}), 400
@@ -176,7 +232,7 @@ def preview():
         emi_amount = parse_float(data.get('emi_amount'), 0)
         interest_rate = parse_float(data.get('interest_rate'), 7.5)
         
-        # Validate required fields
+        # Validate
         if land_loan <= 0 and construction_loan <= 0:
             return jsonify({'error': 'Please enter at least one loan amount'}), 400
         
@@ -186,7 +242,7 @@ def preview():
         if emi_amount <= 0:
             return jsonify({'error': 'EMI amount is required'}), 400
         
-        # Validate EMI > monthly interest
+        # Validate EMI
         total_loan = land_loan + construction_loan
         monthly_interest = (total_loan * interest_rate / 100) / 12
         if emi_amount <= monthly_interest:
@@ -199,12 +255,9 @@ def preview():
             month = data.get(f'part_payment_month_{i}', '')
             amount = parse_float(data.get(f'part_payment_amount_{i}'), 0)
             if month and amount > 0:
-                part_payments.append({
-                    'month': month,
-                    'amount': amount
-                })
+                part_payments.append({'month': month, 'amount': amount})
         
-        # Calculate schedule
+        # Calculate
         result = calculate_loan_schedule(
             land_loan=land_loan,
             construction_loan=construction_loan,
@@ -215,7 +268,6 @@ def preview():
             part_payments=part_payments
         )
         
-        # Return only summary data (not full monthly schedule to keep response small)
         return jsonify({
             'total_principal': result['total_principal'],
             'total_interest': result['total_interest'],
@@ -228,29 +280,90 @@ def preview():
             'start_date': result['start_date']
         })
         
-    except ValueError as e:
-        print(f"Validation error: {e}")
-        return jsonify({'error': f'Calculation error: {str(e)}'}), 400
     except Exception as e:
         print(f"Error in preview: {traceback.format_exc()}")
-        return jsonify({'error': f'Error calculating: {str(e)}'}), 500
+        return jsonify({'error': str(e)}), 500
 
 
 @app.errorhandler(404)
 def not_found(e):
-    return jsonify({'error': 'Resource not found'}), 404
+    return jsonify({'error': 'Not found'}), 404
 
 
 @app.errorhandler(500)
 def server_error(e):
-    return jsonify({'error': 'Internal server error'}), 500
+    return jsonify({'error': 'Server error'}), 500
+
+
+def check_dependencies():
+    """Check if all dependencies are installed"""
+    missing = []
+    
+    try:
+        import flask
+    except ImportError:
+        missing.append('flask')
+    
+    try:
+        import reportlab
+    except ImportError:
+        missing.append('reportlab')
+    
+    try:
+        import matplotlib
+    except ImportError:
+        missing.append('matplotlib')
+    
+    try:
+        from dateutil.relativedelta import relativedelta
+    except ImportError:
+        missing.append('python-dateutil')
+    
+    if missing:
+        print(f"\n❌ Missing dependencies: {', '.join(missing)}")
+        print(f"Run: pip install {' '.join(missing)}")
+        return False
+    
+    return True
 
 
 if __name__ == '__main__':
-    print("=" * 50)
-    print("Home Loan EMI Calculator")
-    print("=" * 50)
-    print("Starting server at http://localhost:5000")
-    print("Press Ctrl+C to stop")
-    print("=" * 50)
-    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
+    print("=" * 60)
+    print("  Home Loan EMI Calculator")
+    print("=" * 60)
+    
+    # Check dependencies
+    if not check_dependencies():
+        print("\nPlease install missing dependencies and try again.")
+        sys.exit(1)
+    
+    print(f"\n✅ All dependencies installed")
+    print(f"📍 Platform: {sys.platform}")
+    print(f"🐍 Python: {sys.version.split()[0]}")
+    
+    port = int(os.environ.get('PORT', 5000))
+    
+    print(f"\n🚀 Starting server...")
+    print(f"\n" + "=" * 60)
+    print(f"  Open your browser and go to:")
+    print(f"  👉 http://localhost:{port}")
+    print(f"  👉 http://127.0.0.1:{port}")
+    print(f"\n  Test page: http://localhost:{port}/test")
+    print("=" * 60)
+    print(f"\nPress Ctrl+C to stop the server\n")
+    
+    try:
+        app.run(
+            host='127.0.0.1',  # Use 127.0.0.1 instead of 0.0.0.0 for Mac compatibility
+            port=port,
+            debug=False,
+            threaded=True,
+            use_reloader=False  # Disable reloader to avoid issues
+        )
+    except OSError as e:
+        if 'Address already in use' in str(e):
+            print(f"\n❌ Port {port} is already in use!")
+            print(f"   Try: kill $(lsof -t -i:{port})")
+            print(f"   Or use a different port: PORT=5001 python3 app.py")
+        else:
+            raise
