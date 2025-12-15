@@ -20,6 +20,9 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
         }
+        debug {
+            minifyEnabled false
+        }
     }
     
     compileOptions {
@@ -30,6 +33,10 @@ android {
     kotlinOptions {
         jvmTarget = '17'
     }
+    
+    buildFeatures {
+        viewBinding true
+    }
 }
 
 dependencies {
@@ -37,4 +44,5 @@ dependencies {
     implementation 'androidx.appcompat:appcompat:1.6.1'
     implementation 'com.google.android.material:material:1.11.0'
     implementation 'androidx.webkit:webkit:1.9.0'
+    implementation 'androidx.constraintlayout:constraintlayout:2.1.4'
 }
