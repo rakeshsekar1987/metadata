@@ -50,14 +50,14 @@ def main():
     print("🚀 Starting server...\n")
     print("=" * 60)
     print("  Open your browser and go to:")
-    print("  👉 http://localhost:5000")
+    print("  👉 http://localhost:4999")
     print("=" * 60)
     print("\nPress Ctrl+C to stop the server\n")
     
     try:
         # Import and run app
         from app import app
-        app.run(host='127.0.0.1', port=5000, debug=False, threaded=True)
+        app.run(host='127.0.0.1', port=4999, debug=False, threaded=True)
     except KeyboardInterrupt:
         print("\n\n👋 Server stopped. Goodbye!")
     except Exception as e:

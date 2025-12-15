@@ -341,7 +341,7 @@ if __name__ == '__main__':
     print(f"📍 Platform: {sys.platform}")
     print(f"🐍 Python: {sys.version.split()[0]}")
     
-    port = int(os.environ.get('PORT', 5000))
+    port = int(os.environ.get('PORT', 4999))
     
     print(f"\n🚀 Starting server...")
     print(f"\n" + "=" * 60)
