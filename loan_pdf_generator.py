@@ -55,7 +55,7 @@ def parse_month_year(date_str):
         return None
     try:
         return datetime.strptime(date_str, '%Y-%m')
-    except:
+    except (ValueError, TypeError):
         return None
 
 
@@ -115,6 +115,13 @@ def calculate_loan_schedule(land_loan, construction_loan, loan_start_date,
         year = current_date.year
         month_num = current_date.month
         
+        # Disbursal
+        disbursal = 0
+        if month_number == 1:
+            disbursal = land_loan
+        if construction_date and current_date.year == construction_date.year and current_date.month == construction_date.month:
+            disbursal += construction_loan
+        
         # Initialize year summary if needed
         if year not in yearly_summary:
             yearly_summary[year] = {
@@ -125,17 +132,6 @@ def calculate_loan_schedule(land_loan, construction_loan, loan_start_date,
                 'prepay': 0,
                 'disbursal': 0
             }
-        
-        # Disbursal
-        disbursal = 0
-        if month_number == 1:
-            disbursal = land_loan
-        if construction_date and current_date.year == construction_date.year and current_date.month == construction_date.month:
-            disbursal += construction_loan
-        
-        # Opening balance for this month
-        if month_number == 1:
-            opening_balance = 0
         
         # Interest for the month (on opening + disbursal)
         balance_for_interest = opening_balance + disbursal
