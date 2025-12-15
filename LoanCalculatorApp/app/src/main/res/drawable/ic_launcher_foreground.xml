@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="108dp"
+    android:height="108dp"
+    android:viewportWidth="108"
+    android:viewportHeight="108">
+    
+    <!-- House icon -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,25 L30,45 L30,75 L78,75 L78,45 Z"/>
+    
+    <!-- Roof -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M54,20 L25,47 L28,50 L54,27 L80,50 L83,47 Z"/>
+    
+    <!-- Door -->
+    <path
+        android:fillColor="#667eea"
+        android:pathData="M48,55 L60,55 L60,75 L48,75 Z"/>
+    
+    <!-- Window -->
+    <path
+        android:fillColor="#667eea"
+        android:pathData="M63,50 L73,50 L73,60 L63,60 Z"/>
+    
+    <!-- Rupee symbol hint -->
+    <path
+        android:fillColor="#667eea"
+        android:pathData="M35,50 L45,50 L45,52 L35,52 Z"/>
+    <path
+        android:fillColor="#667eea"
+        android:pathData="M35,55 L45,55 L45,57 L35,57 Z"/>
+    <path
+        android:fillColor="#667eea"
+        android:pathData="M38,50 L40,50 L40,65 L38,65 Z"/>
+</vector>
