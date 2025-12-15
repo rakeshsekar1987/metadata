@@ -1189,6 +1189,13 @@
             };
         }
 
+        // ============== API Base URL ==============
+        
+        function getBaseUrl() {
+            // Use current origin for API calls
+            return window.location.origin;
+        }
+
         // ============== Preview Calculation ==============
         
         async function handlePreview() {
@@ -1199,11 +1206,31 @@
             previewBtn.innerHTML = '⏳ Calculating...';
 
             try {
-                const response = await fetch('/preview', {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 30000); // 30 second timeout
+
+                const response = await fetch(getBaseUrl() + '/preview', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(getFormData())
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/json'
+                    },
+                    body: JSON.stringify(getFormData()),
+                    signal: controller.signal
                 });
+
+                clearTimeout(timeoutId);
+
+                if (!response.ok) {
+                    let errorMessage = 'Server error';
+                    try {
+                        const errorData = await response.json();
+                        errorMessage = errorData.error || `HTTP ${response.status}`;
+                    } catch (e) {
+                        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    }
+                    throw new Error(errorMessage);
+                }
 
                 const result = await response.json();
 
@@ -1233,7 +1260,13 @@
 
             } catch (error) {
                 console.error('Preview error:', error);
-                showToast('Error calculating preview: ' + error.message, 'error');
+                if (error.name === 'AbortError') {
+                    showToast('Request timed out. Please try again.', 'error');
+                } else if (error.message === 'Failed to fetch') {
+                    showToast('Cannot connect to server. Please ensure the server is running.', 'error');
+                } else {
+                    showToast('Error: ' + error.message, 'error');
+                }
             } finally {
                 previewBtn.disabled = false;
                 previewBtn.innerHTML = '📊 Preview Calculation';
@@ -1250,19 +1283,43 @@
             generateBtn.disabled = true;
 
             try {
-                const response = await fetch('/generate_pdf', {
+                const controller = new AbortController();
+                const timeoutId = setTimeout(() => controller.abort(), 60000); // 60 second timeout for PDF
+
+                const response = await fetch(getBaseUrl() + '/generate_pdf', {
                     method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify(getFormData())
+                    headers: { 
+                        'Content-Type': 'application/json',
+                        'Accept': 'application/pdf'
+                    },
+                    body: JSON.stringify(getFormData()),
+                    signal: controller.signal
                 });
+
+                clearTimeout(timeoutId);
 
                 if (!response.ok) {
                     let errorMessage = 'Failed to generate PDF';
                     try {
                         const errorData = await response.json();
                         errorMessage = errorData.error || errorMessage;
-                    } catch (e) {}
+                    } catch (e) {
+                        errorMessage = `HTTP ${response.status}: ${response.statusText}`;
+                    }
                     throw new Error(errorMessage);
+                }
+
+                // Check if response is actually a PDF
+                const contentType = response.headers.get('content-type');
+                if (!contentType || !contentType.includes('application/pdf')) {
+                    // Try to parse as JSON error
+                    try {
+                        const errorData = await response.json();
+                        throw new Error(errorData.error || 'Invalid response from server');
+                    } catch (e) {
+                        if (e.message.includes('Invalid response')) throw e;
+                        throw new Error('Server returned invalid response');
+                    }
                 }
 
                 // Download the PDF
@@ -1280,7 +1337,13 @@
 
             } catch (error) {
                 console.error('PDF generation error:', error);
-                showToast(error.message, 'error');
+                if (error.name === 'AbortError') {
+                    showToast('Request timed out. Please try again.', 'error');
+                } else if (error.message === 'Failed to fetch') {
+                    showToast('Cannot connect to server. Please ensure the server is running.', 'error');
+                } else {
+                    showToast('Error: ' + error.message, 'error');
+                }
             } finally {
                 hideLoading();
                 generateBtn.disabled = false;

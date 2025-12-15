@@ -4,16 +4,19 @@ Home Loan EMI Calculator Web Application
 Generates comprehensive PDF reports for loan payoff plans
 """
 
-from flask import Flask, render_template, request, send_file, jsonify
+from flask import Flask, render_template, request, send_file, jsonify, make_response
+from flask_cors import CORS
 from loan_pdf_generator import generate_loan_pdf, calculate_loan_schedule
 from datetime import datetime
 import os
 import traceback
 
 app = Flask(__name__)
+CORS(app)  # Enable CORS for all routes
 
 # Configure Flask
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024  # 16MB max request size
+app.config['JSON_SORT_KEYS'] = False
 
 
 def parse_float(value, default=0):
@@ -37,15 +40,33 @@ def parse_date(date_str):
         return None
 
 
+@app.after_request
+def after_request(response):
+    """Add headers to all responses"""
+    response.headers.add('Access-Control-Allow-Origin', '*')
+    response.headers.add('Access-Control-Allow-Headers', 'Content-Type,Authorization')
+    response.headers.add('Access-Control-Allow-Methods', 'GET,PUT,POST,DELETE,OPTIONS')
+    return response
+
+
 @app.route('/')
 def index():
     """Render the main form page"""
     return render_template('index.html')
 
 
-@app.route('/generate_pdf', methods=['POST'])
+@app.route('/health')
+def health():
+    """Health check endpoint"""
+    return jsonify({'status': 'ok', 'message': 'Server is running'})
+
+
+@app.route('/generate_pdf', methods=['POST', 'OPTIONS'])
 def generate_pdf():
     """Generate PDF based on form inputs"""
+    if request.method == 'OPTIONS':
+        return make_response('', 204)
+    
     try:
         # Get form data
         data = request.get_json()
@@ -118,23 +139,30 @@ def generate_pdf():
             part_payments=part_payments
         )
         
-        return send_file(
-            pdf_path,
-            mimetype='application/pdf',
-            as_attachment=True,
-            download_name='Home_Loan_Payoff_Plan.pdf'
-        )
+        # Read the PDF file and send it
+        with open(pdf_path, 'rb') as f:
+            pdf_data = f.read()
+        
+        response = make_response(pdf_data)
+        response.headers['Content-Type'] = 'application/pdf'
+        response.headers['Content-Disposition'] = 'attachment; filename=Home_Loan_Payoff_Plan.pdf'
+        response.headers['Content-Length'] = len(pdf_data)
+        return response
         
     except ValueError as e:
+        print(f"Validation error: {e}")
         return jsonify({'error': f'Invalid input: {str(e)}'}), 400
     except Exception as e:
         print(f"Error generating PDF: {traceback.format_exc()}")
         return jsonify({'error': f'Error generating PDF: {str(e)}'}), 500
 
 
-@app.route('/preview', methods=['POST'])
+@app.route('/preview', methods=['POST', 'OPTIONS'])
 def preview():
     """Preview loan calculation without generating PDF"""
+    if request.method == 'OPTIONS':
+        return make_response('', 204)
+    
     try:
         data = request.get_json()
         if not data:
@@ -157,6 +185,14 @@ def preview():
         
         if emi_amount <= 0:
             return jsonify({'error': 'EMI amount is required'}), 400
+        
+        # Validate EMI > monthly interest
+        total_loan = land_loan + construction_loan
+        monthly_interest = (total_loan * interest_rate / 100) / 12
+        if emi_amount <= monthly_interest:
+            return jsonify({
+                'error': f'EMI must be greater than monthly interest (Rs. {monthly_interest:,.0f})'
+            }), 400
         
         part_payments = []
         for i in range(1, 6):
@@ -193,6 +229,7 @@ def preview():
         })
         
     except ValueError as e:
+        print(f"Validation error: {e}")
         return jsonify({'error': f'Calculation error: {str(e)}'}), 400
     except Exception as e:
         print(f"Error in preview: {traceback.format_exc()}")
@@ -216,4 +253,4 @@ if __name__ == '__main__':
     print("Starting server at http://localhost:5000")
     print("Press Ctrl+C to stop")
     print("=" * 50)
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    app.run(host='0.0.0.0', port=5000, debug=False, threaded=True)
