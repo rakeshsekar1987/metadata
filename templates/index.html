@@ -642,6 +642,29 @@
     </style>
 </head>
 <body>
+    <!-- File Protocol Warning -->
+    <div id="fileProtocolWarning" style="display: none; position: fixed; top: 0; left: 0; right: 0; bottom: 0; background: rgba(0,0,0,0.9); z-index: 9999; color: white; padding: 40px; text-align: center;">
+        <div style="max-width: 600px; margin: 100px auto; background: #1a237e; padding: 40px; border-radius: 20px;">
+            <h1 style="font-size: 3rem; margin-bottom: 20px;">⚠️</h1>
+            <h2 style="margin-bottom: 20px;">Cannot Open Directly</h2>
+            <p style="font-size: 1.1rem; line-height: 1.8; margin-bottom: 30px;">
+                This application requires a server to run.<br>
+                You cannot open the HTML file directly.
+            </p>
+            <div style="background: #303f9f; padding: 20px; border-radius: 10px; text-align: left; font-family: monospace;">
+                <p style="color: #90caf9; margin-bottom: 10px;">Run these commands in Terminal:</p>
+                <p style="color: #fff;">$ cd /path/to/workspace</p>
+                <p style="color: #fff;">$ python3 app.py</p>
+                <p style="color: #90caf9; margin-top: 15px;">Then open in browser:</p>
+                <p style="color: #4caf50; font-size: 1.2rem;">http://localhost:5000</p>
+            </div>
+            <button onclick="window.location.href='http://localhost:5000'" 
+                    style="margin-top: 30px; padding: 15px 30px; font-size: 1.1rem; background: #4caf50; color: white; border: none; border-radius: 10px; cursor: pointer;">
+                Go to http://localhost:5000 →
+            </button>
+        </div>
+    </div>
+
     <!-- Toast Container -->
     <div class="toast-container" id="toastContainer"></div>
 
@@ -1189,14 +1212,18 @@
             };
         }
 
+        // ============== Check for File Protocol ==============
+        
+        (function() {
+            if (window.location.protocol === 'file:') {
+                document.getElementById('fileProtocolWarning').style.display = 'block';
+            }
+        })();
+
         // ============== API Base URL ==============
         
         function getBaseUrl() {
             // Use current origin for API calls
-            // If opened as file://, use localhost
-            if (window.location.protocol === 'file:') {
-                return 'http://localhost:5000';
-            }
             return window.location.origin;
         }
 
