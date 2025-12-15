@@ -1,0 +1,814 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Home Loan EMI Calculator & PDF Generator</title>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 900px;
+            margin: 0 auto;
+        }
+
+        .header {
+            text-align: center;
+            color: white;
+            margin-bottom: 30px;
+        }
+
+        .header h1 {
+            font-size: 2.5rem;
+            font-weight: 700;
+            margin-bottom: 10px;
+            text-shadow: 2px 2px 4px rgba(0,0,0,0.2);
+        }
+
+        .header p {
+            font-size: 1.1rem;
+            opacity: 0.9;
+        }
+
+        .card {
+            background: white;
+            border-radius: 20px;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            padding: 40px;
+            margin-bottom: 20px;
+        }
+
+        .section-title {
+            font-size: 1.3rem;
+            font-weight: 600;
+            color: #1a237e;
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 3px solid #667eea;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .section-title .icon {
+            font-size: 1.5rem;
+        }
+
+        .form-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+        }
+
+        .form-group label {
+            font-size: 0.9rem;
+            font-weight: 500;
+            color: #37474f;
+            margin-bottom: 8px;
+        }
+
+        .form-group input {
+            padding: 14px 16px;
+            border: 2px solid #e0e0e0;
+            border-radius: 10px;
+            font-size: 1rem;
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+
+        .form-group input:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 4px rgba(102, 126, 234, 0.1);
+        }
+
+        .form-group input::placeholder {
+            color: #9e9e9e;
+        }
+
+        .input-prefix {
+            position: relative;
+        }
+
+        .input-prefix span {
+            position: absolute;
+            left: 16px;
+            top: 50%;
+            transform: translateY(-50%);
+            color: #667eea;
+            font-weight: 600;
+        }
+
+        .input-prefix input {
+            padding-left: 50px;
+        }
+
+        .part-payments-section {
+            background: #f8f9ff;
+            border-radius: 15px;
+            padding: 25px;
+            margin-bottom: 30px;
+        }
+
+        .part-payment-row {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 15px;
+            margin-bottom: 15px;
+            align-items: end;
+        }
+
+        .part-payment-row:last-child {
+            margin-bottom: 0;
+        }
+
+        .part-payment-number {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            width: 30px;
+            height: 30px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            font-weight: 600;
+            font-size: 0.9rem;
+            margin-bottom: 8px;
+        }
+
+        .btn {
+            padding: 16px 32px;
+            border: none;
+            border-radius: 12px;
+            font-size: 1rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            font-family: inherit;
+        }
+
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 12px 30px rgba(102, 126, 234, 0.5);
+        }
+
+        .btn-secondary {
+            background: #f5f5f5;
+            color: #37474f;
+        }
+
+        .btn-secondary:hover {
+            background: #e0e0e0;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 15px;
+            justify-content: center;
+            flex-wrap: wrap;
+        }
+
+        .preview-section {
+            display: none;
+            margin-top: 30px;
+        }
+
+        .preview-section.active {
+            display: block;
+        }
+
+        .preview-card {
+            background: linear-gradient(135deg, #e8eaf6 0%, #c5cae9 100%);
+            border-radius: 15px;
+            padding: 25px;
+        }
+
+        .preview-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .preview-item {
+            background: white;
+            border-radius: 12px;
+            padding: 20px;
+            text-align: center;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+        }
+
+        .preview-item .value {
+            font-size: 1.5rem;
+            font-weight: 700;
+            color: #1a237e;
+            margin-bottom: 5px;
+        }
+
+        .preview-item .label {
+            font-size: 0.85rem;
+            color: #757575;
+        }
+
+        .preview-item.highlight {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+        }
+
+        .preview-item.highlight .value,
+        .preview-item.highlight .label {
+            color: white;
+        }
+
+        .loading {
+            display: none;
+            text-align: center;
+            padding: 20px;
+        }
+
+        .loading.active {
+            display: block;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid #e0e0e0;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #ffebee;
+            color: #c62828;
+            padding: 15px 20px;
+            border-radius: 10px;
+            margin-top: 20px;
+            display: none;
+        }
+
+        .error-message.active {
+            display: block;
+        }
+
+        .tooltip {
+            position: relative;
+            display: inline-block;
+            margin-left: 5px;
+            cursor: help;
+        }
+
+        .tooltip .tooltip-text {
+            visibility: hidden;
+            width: 250px;
+            background-color: #37474f;
+            color: #fff;
+            text-align: left;
+            border-radius: 8px;
+            padding: 10px 15px;
+            position: absolute;
+            z-index: 1;
+            bottom: 125%;
+            left: 50%;
+            transform: translateX(-50%);
+            opacity: 0;
+            transition: opacity 0.3s;
+            font-size: 0.8rem;
+            font-weight: 400;
+        }
+
+        .tooltip:hover .tooltip-text {
+            visibility: visible;
+            opacity: 1;
+        }
+
+        .info-icon {
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+            width: 18px;
+            height: 18px;
+            background: #667eea;
+            color: white;
+            border-radius: 50%;
+            font-size: 0.7rem;
+            font-weight: 700;
+        }
+
+        .note-box {
+            background: #fff8e1;
+            border-left: 4px solid #ffc107;
+            padding: 15px 20px;
+            border-radius: 0 10px 10px 0;
+            margin-top: 20px;
+            font-size: 0.9rem;
+            color: #5d4037;
+        }
+
+        .note-box strong {
+            color: #e65100;
+        }
+
+        @media (max-width: 600px) {
+            .header h1 {
+                font-size: 1.8rem;
+            }
+
+            .card {
+                padding: 25px;
+            }
+
+            .part-payment-row {
+                grid-template-columns: 1fr;
+            }
+
+            .btn-group {
+                flex-direction: column;
+            }
+
+            .btn {
+                width: 100%;
+            }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>Home Loan EMI Calculator</h1>
+            <p>Generate comprehensive PDF reports for your loan payoff plan</p>
+        </div>
+
+        <div class="card">
+            <form id="loanForm">
+                <!-- Loan Amounts Section -->
+                <h2 class="section-title">
+                    <span class="icon">💰</span>
+                    Loan Amounts
+                </h2>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>
+                            Land Loan Amount
+                            <span class="tooltip">
+                                <span class="info-icon">i</span>
+                                <span class="tooltip-text">Initial loan amount for land purchase. This will be disbursed on the loan start date.</span>
+                            </span>
+                        </label>
+                        <div class="input-prefix">
+                            <span>Rs.</span>
+                            <input type="number" id="land_loan" name="land_loan" placeholder="e.g., 1,50,00,000" min="0" step="1">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            Home Construction Loan Amount
+                            <span class="tooltip">
+                                <span class="info-icon">i</span>
+                                <span class="tooltip-text">Additional loan amount for construction. This will be disbursed when construction starts.</span>
+                            </span>
+                        </label>
+                        <div class="input-prefix">
+                            <span>Rs.</span>
+                            <input type="number" id="construction_loan" name="construction_loan" placeholder="e.g., 1,00,00,000" min="0" step="1">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dates Section -->
+                <h2 class="section-title">
+                    <span class="icon">📅</span>
+                    Important Dates
+                </h2>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>
+                            Loan Start Date
+                            <span class="tooltip">
+                                <span class="info-icon">i</span>
+                                <span class="tooltip-text">Date when the land loan is disbursed. EMI starts from the next month.</span>
+                            </span>
+                        </label>
+                        <input type="month" id="loan_start_date" name="loan_start_date" required>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            Construction Start Date
+                            <span class="tooltip">
+                                <span class="info-icon">i</span>
+                                <span class="tooltip-text">Date when construction loan is disbursed. Leave empty if no construction loan.</span>
+                            </span>
+                        </label>
+                        <input type="month" id="construction_start_date" name="construction_start_date">
+                    </div>
+                </div>
+
+                <!-- EMI & Interest Section -->
+                <h2 class="section-title">
+                    <span class="icon">📊</span>
+                    EMI & Interest Details
+                </h2>
+                <div class="form-grid">
+                    <div class="form-group">
+                        <label>
+                            Monthly EMI Amount
+                            <span class="tooltip">
+                                <span class="info-icon">i</span>
+                                <span class="tooltip-text">Fixed monthly EMI you plan to pay. EMI starts from the month after loan start.</span>
+                            </span>
+                        </label>
+                        <div class="input-prefix">
+                            <span>Rs.</span>
+                            <input type="number" id="emi_amount" name="emi_amount" placeholder="e.g., 3,00,000" min="0" step="1" required>
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>
+                            Interest Rate (% per annum)
+                            <span class="tooltip">
+                                <span class="info-icon">i</span>
+                                <span class="tooltip-text">Annual interest rate for the loan. Uses monthly reducing balance method.</span>
+                            </span>
+                        </label>
+                        <input type="number" id="interest_rate" name="interest_rate" placeholder="e.g., 7.54" min="0" max="30" step="0.01" value="7.54" required>
+                    </div>
+                </div>
+
+                <!-- Part Payments Section -->
+                <h2 class="section-title">
+                    <span class="icon">💸</span>
+                    Part Payments (Prepayments)
+                </h2>
+                <div class="part-payments-section">
+                    <p style="margin-bottom: 20px; color: #5c6bc0; font-size: 0.95rem;">
+                        Add recurring or one-time prepayments to reduce your loan tenure. You can add up to 5 part payment schedules.
+                    </p>
+                    
+                    <div class="part-payment-row">
+                        <div class="form-group">
+                            <div class="part-payment-number">1</div>
+                            <label>Payment Month (every year)</label>
+                            <select id="part_payment_month_1" name="part_payment_month_1" style="padding: 14px 16px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 1rem; font-family: inherit;">
+                                <option value="">Select Month</option>
+                                <option value="January">January</option>
+                                <option value="February">February</option>
+                                <option value="March">March</option>
+                                <option value="April">April</option>
+                                <option value="May">May</option>
+                                <option value="June">June</option>
+                                <option value="July">July</option>
+                                <option value="August">August</option>
+                                <option value="September">September</option>
+                                <option value="October">October</option>
+                                <option value="November">November</option>
+                                <option value="December">December</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Amount</label>
+                            <div class="input-prefix">
+                                <span>Rs.</span>
+                                <input type="number" id="part_payment_amount_1" name="part_payment_amount_1" placeholder="e.g., 1,00,000" min="0" step="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="part-payment-row">
+                        <div class="form-group">
+                            <div class="part-payment-number">2</div>
+                            <label>Payment Month (every year)</label>
+                            <select id="part_payment_month_2" name="part_payment_month_2" style="padding: 14px 16px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 1rem; font-family: inherit;">
+                                <option value="">Select Month</option>
+                                <option value="January">January</option>
+                                <option value="February">February</option>
+                                <option value="March">March</option>
+                                <option value="April">April</option>
+                                <option value="May">May</option>
+                                <option value="June">June</option>
+                                <option value="July">July</option>
+                                <option value="August">August</option>
+                                <option value="September">September</option>
+                                <option value="October">October</option>
+                                <option value="November">November</option>
+                                <option value="December">December</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Amount</label>
+                            <div class="input-prefix">
+                                <span>Rs.</span>
+                                <input type="number" id="part_payment_amount_2" name="part_payment_amount_2" placeholder="e.g., 5,00,000" min="0" step="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="part-payment-row">
+                        <div class="form-group">
+                            <div class="part-payment-number">3</div>
+                            <label>Payment Month (every year)</label>
+                            <select id="part_payment_month_3" name="part_payment_month_3" style="padding: 14px 16px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 1rem; font-family: inherit;">
+                                <option value="">Select Month</option>
+                                <option value="January">January</option>
+                                <option value="February">February</option>
+                                <option value="March">March</option>
+                                <option value="April">April</option>
+                                <option value="May">May</option>
+                                <option value="June">June</option>
+                                <option value="July">July</option>
+                                <option value="August">August</option>
+                                <option value="September">September</option>
+                                <option value="October">October</option>
+                                <option value="November">November</option>
+                                <option value="December">December</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Amount</label>
+                            <div class="input-prefix">
+                                <span>Rs.</span>
+                                <input type="number" id="part_payment_amount_3" name="part_payment_amount_3" placeholder="Amount" min="0" step="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="part-payment-row">
+                        <div class="form-group">
+                            <div class="part-payment-number">4</div>
+                            <label>Payment Month (every year)</label>
+                            <select id="part_payment_month_4" name="part_payment_month_4" style="padding: 14px 16px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 1rem; font-family: inherit;">
+                                <option value="">Select Month</option>
+                                <option value="January">January</option>
+                                <option value="February">February</option>
+                                <option value="March">March</option>
+                                <option value="April">April</option>
+                                <option value="May">May</option>
+                                <option value="June">June</option>
+                                <option value="July">July</option>
+                                <option value="August">August</option>
+                                <option value="September">September</option>
+                                <option value="October">October</option>
+                                <option value="November">November</option>
+                                <option value="December">December</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Amount</label>
+                            <div class="input-prefix">
+                                <span>Rs.</span>
+                                <input type="number" id="part_payment_amount_4" name="part_payment_amount_4" placeholder="Amount" min="0" step="1">
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="part-payment-row">
+                        <div class="form-group">
+                            <div class="part-payment-number">5</div>
+                            <label>Payment Month (every year)</label>
+                            <select id="part_payment_month_5" name="part_payment_month_5" style="padding: 14px 16px; border: 2px solid #e0e0e0; border-radius: 10px; font-size: 1rem; font-family: inherit;">
+                                <option value="">Select Month</option>
+                                <option value="January">January</option>
+                                <option value="February">February</option>
+                                <option value="March">March</option>
+                                <option value="April">April</option>
+                                <option value="May">May</option>
+                                <option value="June">June</option>
+                                <option value="July">July</option>
+                                <option value="August">August</option>
+                                <option value="September">September</option>
+                                <option value="October">October</option>
+                                <option value="November">November</option>
+                                <option value="December">December</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label>Amount</label>
+                            <div class="input-prefix">
+                                <span>Rs.</span>
+                                <input type="number" id="part_payment_amount_5" name="part_payment_amount_5" placeholder="Amount" min="0" step="1">
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="note-box">
+                    <strong>Note:</strong> Part payments are applied every year on the specified month. For example, if you select "February" with Rs. 1,00,000, this amount will be prepaid every February until the loan closes.
+                </div>
+
+                <div class="btn-group" style="margin-top: 30px;">
+                    <button type="button" class="btn btn-secondary" onclick="previewCalculation()">
+                        📊 Preview Calculation
+                    </button>
+                    <button type="button" class="btn btn-primary" onclick="generatePDF()">
+                        📄 Generate PDF Report
+                    </button>
+                </div>
+
+                <div class="loading" id="loading">
+                    <div class="spinner"></div>
+                    <p>Generating your PDF report...</p>
+                </div>
+
+                <div class="error-message" id="errorMessage"></div>
+            </form>
+
+            <!-- Preview Section -->
+            <div class="preview-section" id="previewSection">
+                <h2 class="section-title">
+                    <span class="icon">📈</span>
+                    Calculation Preview
+                </h2>
+                <div class="preview-card">
+                    <div class="preview-grid">
+                        <div class="preview-item highlight">
+                            <div class="value" id="preview_closure_date">-</div>
+                            <div class="label">Projected Closure Date</div>
+                        </div>
+                        <div class="preview-item">
+                            <div class="value" id="preview_tenure">-</div>
+                            <div class="label">Total Tenure</div>
+                        </div>
+                        <div class="preview-item">
+                            <div class="value" id="preview_total_principal">-</div>
+                            <div class="label">Total Principal</div>
+                        </div>
+                        <div class="preview-item">
+                            <div class="value" id="preview_total_interest">-</div>
+                            <div class="label">Total Interest</div>
+                        </div>
+                        <div class="preview-item">
+                            <div class="value" id="preview_total_paid">-</div>
+                            <div class="label">Total Amount Paid</div>
+                        </div>
+                        <div class="preview-item">
+                            <div class="value" id="preview_total_prepay">-</div>
+                            <div class="label">Total Prepayments</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="text-align: center; color: white; opacity: 0.8; font-size: 0.9rem; margin-top: 20px;">
+            Home Loan EMI Calculator | Generates comprehensive PDF reports with month-wise amortization schedules
+        </div>
+    </div>
+
+    <script>
+        function getFormData() {
+            return {
+                land_loan: document.getElementById('land_loan').value,
+                construction_loan: document.getElementById('construction_loan').value,
+                loan_start_date: document.getElementById('loan_start_date').value,
+                construction_start_date: document.getElementById('construction_start_date').value,
+                emi_amount: document.getElementById('emi_amount').value,
+                interest_rate: document.getElementById('interest_rate').value,
+                part_payment_month_1: document.getElementById('part_payment_month_1').value,
+                part_payment_amount_1: document.getElementById('part_payment_amount_1').value,
+                part_payment_month_2: document.getElementById('part_payment_month_2').value,
+                part_payment_amount_2: document.getElementById('part_payment_amount_2').value,
+                part_payment_month_3: document.getElementById('part_payment_month_3').value,
+                part_payment_amount_3: document.getElementById('part_payment_amount_3').value,
+                part_payment_month_4: document.getElementById('part_payment_month_4').value,
+                part_payment_amount_4: document.getElementById('part_payment_amount_4').value,
+                part_payment_month_5: document.getElementById('part_payment_month_5').value,
+                part_payment_amount_5: document.getElementById('part_payment_amount_5').value
+            };
+        }
+
+        function formatIndianNumber(num) {
+            if (!num || num === 0) return '0';
+            num = Math.round(num);
+            let s = num.toString();
+            if (s.length <= 3) return s;
+            let result = s.slice(-3);
+            s = s.slice(0, -3);
+            while (s.length > 0) {
+                result = s.slice(-2) + ',' + result;
+                s = s.slice(0, -2);
+            }
+            return result;
+        }
+
+        function showError(message) {
+            const errorDiv = document.getElementById('errorMessage');
+            errorDiv.textContent = message;
+            errorDiv.classList.add('active');
+            setTimeout(() => {
+                errorDiv.classList.remove('active');
+            }, 5000);
+        }
+
+        function hideError() {
+            document.getElementById('errorMessage').classList.remove('active');
+        }
+
+        async function previewCalculation() {
+            hideError();
+            const data = getFormData();
+            
+            try {
+                const response = await fetch('/preview', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                const result = await response.json();
+                
+                if (result.error) {
+                    showError(result.error);
+                    return;
+                }
+
+                // Update preview section
+                document.getElementById('preview_closure_date').textContent = result.closure_date || '-';
+                document.getElementById('preview_tenure').textContent = result.tenure || '-';
+                document.getElementById('preview_total_principal').textContent = 'Rs. ' + formatIndianNumber(result.total_principal);
+                document.getElementById('preview_total_interest').textContent = 'Rs. ' + formatIndianNumber(result.total_interest);
+                document.getElementById('preview_total_paid').textContent = 'Rs. ' + formatIndianNumber(result.total_paid);
+                document.getElementById('preview_total_prepay').textContent = 'Rs. ' + formatIndianNumber(result.total_prepayments);
+                
+                document.getElementById('previewSection').classList.add('active');
+                
+            } catch (error) {
+                showError('Error calculating preview: ' + error.message);
+            }
+        }
+
+        async function generatePDF() {
+            hideError();
+            const data = getFormData();
+            const loading = document.getElementById('loading');
+            
+            loading.classList.add('active');
+            
+            try {
+                const response = await fetch('/generate_pdf', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify(data)
+                });
+
+                if (!response.ok) {
+                    const error = await response.json();
+                    throw new Error(error.error || 'Failed to generate PDF');
+                }
+
+                // Download the PDF
+                const blob = await response.blob();
+                const url = window.URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'Home_Loan_Payoff_Plan.pdf';
+                document.body.appendChild(a);
+                a.click();
+                window.URL.revokeObjectURL(url);
+                a.remove();
+                
+            } catch (error) {
+                showError(error.message);
+            } finally {
+                loading.classList.remove('active');
+            }
+        }
+
+        // Set default date to current month
+        const today = new Date();
+        const defaultDate = today.toISOString().slice(0, 7);
+        document.getElementById('loan_start_date').value = defaultDate;
+    </script>
+</body>
+</html>
